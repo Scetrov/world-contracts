@@ -62,7 +62,7 @@ fun setup_character(ts: &mut ts::Scenario, game_id: u32, tribe_id: u32, name: ve
 }
 
 #[test]
-fun test_character_registry_initialized() {
+fun character_registry_initialized() {
     let mut ts = ts::begin(GOVERNOR);
     ts::next_tx(&mut ts, GOVERNOR);
     {
@@ -80,7 +80,7 @@ fun test_character_registry_initialized() {
 }
 
 #[test]
-fun test_create_character() {
+fun create_character() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
     setup_character(&mut ts, 1, 100, b"test");
@@ -99,7 +99,7 @@ fun test_create_character() {
 }
 
 #[test]
-fun test_deterministic_character_id() {
+fun deterministic_character_id() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
 
@@ -143,7 +143,7 @@ fun test_deterministic_character_id() {
 }
 
 #[test]
-fun test_different_game_ids_produce_different_character_ids() {
+fun different_game_ids_produce_different_character_ids() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
 
@@ -198,8 +198,98 @@ fun test_different_game_ids_produce_different_character_ids() {
 }
 
 #[test]
-#[expected_failure(abort_code = derived_object::EObjectAlreadyExists)]
-fun test_duplicate_game_id_fails() {
+fun rename_character() {
+    let mut ts = ts::begin(GOVERNOR);
+    setup_world(&mut ts);
+    setup_character(&mut ts, 1, 100, b"test");
+
+    ts::next_tx(&mut ts, USER_A);
+    {
+        let character = ts::take_shared<Character>(&ts);
+        let character_id = object::id(&character);
+        ts::return_shared(character);
+
+        setup_owner_cap(&mut ts, USER_A, character_id);
+    };
+
+    ts::next_tx(&mut ts, USER_A);
+    {
+        let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
+        let mut character = ts::take_shared<Character>(&ts);
+
+        character::rename_character(&mut character, &owner_cap, utf8(b"new_name"));
+        assert_eq!(character::name(&character), utf8(b"new_name"));
+
+        ts::return_shared(character);
+        ts::return_to_sender(&ts, owner_cap);
+    };
+
+    ts.end();
+}
+
+#[test]
+fun update_tribe() {
+    let mut ts = ts::begin(GOVERNOR);
+    setup_world(&mut ts);
+    setup_character(&mut ts, 1, 100, b"test");
+
+    ts::next_tx(&mut ts, ADMIN);
+    {
+        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
+        let mut character = ts::take_shared<Character>(&ts);
+
+        character::update_tribe(&mut character, &admin_cap, 200);
+        assert_eq!(character::tribe_id(&character), 200);
+
+        ts::return_shared(character);
+        ts::return_to_sender(&ts, admin_cap);
+    };
+
+    ts.end();
+}
+
+#[test]
+fun delete_character() {
+    let mut ts = ts::begin(GOVERNOR);
+    setup_world(&mut ts);
+    setup_character(&mut ts, 1, 100, b"test");
+
+    ts::next_tx(&mut ts, ADMIN);
+    {
+        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
+        let character = ts::take_shared<Character>(&ts);
+
+        character::delete_character(character, &admin_cap);
+
+        ts::return_to_sender(&ts, admin_cap);
+    };
+
+    ts.end();
+}
+
+#[test]
+#[expected_failure(abort_code = character::EGameCharacterIdEmpty)]
+fun create_character_with_empty_game_character_id() {
+    let mut ts = ts::begin(GOVERNOR);
+    setup_world(&mut ts);
+    setup_character(&mut ts, 0, 100, b"test");
+
+    abort
+}
+
+#[test]
+#[expected_failure(abort_code = character::ETribeIdEmpty)]
+fun create_character_with_empty_tribe_id() {
+    let mut ts = ts::begin(GOVERNOR);
+    setup_world(&mut ts);
+    setup_character(&mut ts, 1, 0, b"test");
+
+    abort
+}
+
+#[test]
+#[expected_failure(abort_code = character::ECharacterAlreadyExists)]
+fun duplicate_game_id_fails() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
 
@@ -250,8 +340,8 @@ fun test_duplicate_game_id_fails() {
 // even after the original character is deleted.
 // The Sui team plans to lift this restriction in the future.
 #[test]
-#[expected_failure(abort_code = derived_object::EObjectAlreadyExists)]
-fun test_delete_recreate_character() {
+#[expected_failure]
+fun delete_recreate_character() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
 
@@ -305,78 +395,8 @@ fun test_delete_recreate_character() {
 }
 
 #[test]
-fun test_rename_character() {
-    let mut ts = ts::begin(GOVERNOR);
-    setup_world(&mut ts);
-    setup_character(&mut ts, 1, 100, b"test");
-
-    ts::next_tx(&mut ts, USER_A);
-    {
-        let character = ts::take_shared<Character>(&ts);
-        let character_id = object::id(&character);
-        ts::return_shared(character);
-
-        setup_owner_cap(&mut ts, USER_A, character_id);
-    };
-
-    ts::next_tx(&mut ts, USER_A);
-    {
-        let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
-        let mut character = ts::take_shared<Character>(&ts);
-
-        character::rename_character(&mut character, &owner_cap, utf8(b"new_name"));
-        assert_eq!(character::name(&character), utf8(b"new_name"));
-
-        ts::return_shared(character);
-        ts::return_to_sender(&ts, owner_cap);
-    };
-
-    ts.end();
-}
-
-#[test]
-fun test_update_tribe() {
-    let mut ts = ts::begin(GOVERNOR);
-    setup_world(&mut ts);
-    setup_character(&mut ts, 1, 100, b"test");
-
-    ts::next_tx(&mut ts, ADMIN);
-    {
-        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let mut character = ts::take_shared<Character>(&ts);
-
-        character::update_tribe(&mut character, &admin_cap, 200);
-        assert_eq!(character::tribe_id(&character), 200);
-
-        ts::return_shared(character);
-        ts::return_to_sender(&ts, admin_cap);
-    };
-
-    ts.end();
-}
-
-#[test]
-fun test_delete_character() {
-    let mut ts = ts::begin(GOVERNOR);
-    setup_world(&mut ts);
-    setup_character(&mut ts, 1, 100, b"test");
-
-    ts::next_tx(&mut ts, ADMIN);
-    {
-        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let character = ts::take_shared<Character>(&ts);
-
-        character::delete_character(character, &admin_cap);
-
-        ts::return_to_sender(&ts, admin_cap);
-    };
-
-    ts.end();
-}
-
-#[test]
 #[expected_failure]
-fun test_create_character_without_admin_cap() {
+fun create_character_without_admin_cap() {
     let mut ts = ts::begin(GOVERNOR);
     setup_world(&mut ts);
 
