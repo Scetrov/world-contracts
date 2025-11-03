@@ -26,8 +26,6 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           target: test-stage
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       
       # TODO: Add integration tests here
       # TODO: Add smoke tests for deployed contracts
@@ -79,5 +77,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
