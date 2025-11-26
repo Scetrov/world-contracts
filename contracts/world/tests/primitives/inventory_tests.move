@@ -1,19 +1,18 @@
 #[test_only]
 module world::inventory_tests;
 
-use std::unit_test::assert_eq;
+use std::{bcs, unit_test::assert_eq};
 use sui::test_scenario as ts;
 use world::{
-    authority::{OwnerCap, AdminCap},
+    authority::{OwnerCap, AdminCap, ServerAddressRegistry},
     inventory::{Self, Inventory},
     location::{Self, Location},
     status::{Self, AssemblyStatus},
-    test_helpers::{Self, governor, admin, user_a, user_b}
+    test_helpers::{Self, governor, admin, user_a, user_b, server_admin}
 };
 
 const LOCATION_A_HASH: vector<u8> =
     x"7a8f3b2e9c4d1a6f5e8b2d9c3f7a1e5b7a8f3b2e9c4d1a6f5e8b2d9c3f7a1e5b";
-const PROOF: vector<u8> = x"5a2f1b0e7c4d1a6f5e8b2d9c3f7a1e5b";
 const MAX_CAPACITY: u64 = 1000;
 const AMMO_TYPE_ID: u64 = 88069;
 const AMMO_ITEM_ID: u64 = 1000004145107;
@@ -222,13 +221,11 @@ public fun burn_items() {
         let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
         storage_unit
             .inventory
-            .burn_items(
+            .burn_items_test(
                 status_ref,
                 &owner_cap,
                 AMMO_ITEM_ID,
                 AMMO_QUANTITY,
-                LOCATION_A_HASH,
-                PROOF,
             );
 
         let inv_ref = &storage_unit.inventory;
@@ -265,13 +262,11 @@ public fun burn_partial_items() {
         let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
         storage_unit
             .inventory
-            .burn_items(
+            .burn_items_test(
                 status_ref,
                 &owner_cap,
                 AMMO_ITEM_ID,
                 5u32, //diff quantity
-                LOCATION_A_HASH,
-                PROOF,
             );
 
         let inv_ref = &storage_unit.inventory;
@@ -360,6 +355,98 @@ public fun deposit_items() {
 /// Tests that creating inventory with zero capacity fails
 /// Scenario: Attempt to create inventory with max_capacity = 0
 /// Expected: Transaction aborts with EInventoryInvalidCapacity error
+#[test]
+fun burn_items_with_proof() {
+    let mut ts = ts::begin(governor());
+    test_helpers::setup_world(&mut ts);
+    test_helpers::register_server_address(&mut ts);
+    let verified_location_hash = test_helpers::get_verified_location_hash();
+
+    // create storage unit
+    ts::next_tx(&mut ts, server_admin());
+    {
+        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
+        let uid = object::new(ts.ctx());
+        let assembly_id = test_helpers::get_storage_unit_id();
+        let storage_unit = StorageUnit {
+            id: uid,
+            status: status::anchor(&admin_cap, assembly_id),
+            location: location::attach_location(&admin_cap, assembly_id, verified_location_hash),
+            inventory: inventory::create(&admin_cap, MAX_CAPACITY, assembly_id),
+        };
+        transfer::share_object(storage_unit);
+        ts::return_to_sender(&ts, admin_cap);
+    };
+
+    test_helpers::setup_owner_cap(&mut ts, server_admin(), test_helpers::get_storage_unit_id());
+
+    ts::next_tx(&mut ts, server_admin());
+    {
+        let mut storage_unit = ts::take_shared<StorageUnit>(&ts);
+        let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
+        storage_unit.status.online(&owner_cap);
+        ts::return_shared(storage_unit);
+        ts::return_to_sender(&ts, owner_cap);
+    };
+    ts::next_tx(&mut ts, admin());
+    {
+        let mut storage_unit = ts::take_shared<StorageUnit>(&ts);
+        let status_ref = &storage_unit.status;
+        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
+        storage_unit
+            .inventory
+            .mint_items(
+                status_ref,
+                &admin_cap,
+                AMMO_ITEM_ID,
+                AMMO_TYPE_ID,
+                AMMO_VOLUME,
+                AMMO_QUANTITY,
+                x"16217de8ec7330ec3eac32831df5c9cd9b21a255756a5fd5762dd7f49f6cc049",
+                ts.ctx(),
+            );
+        ts::return_shared(storage_unit);
+        ts::return_to_sender(&ts, admin_cap);
+    };
+
+    ts::next_tx(&mut ts, server_admin());
+    {
+        let mut storage_unit = ts::take_shared<StorageUnit>(&ts);
+        let status_ref = &storage_unit.status;
+        let location_ref = &storage_unit.location;
+        let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
+        let server_registry = ts::take_shared<ServerAddressRegistry>(&ts);
+        let proof = test_helpers::construct_location_proof(verified_location_hash);
+        let location_proof = bcs::to_bytes(&proof);
+
+        storage_unit
+            .inventory
+            .burn_items_with_proof_test(
+                status_ref,
+                location_ref,
+                &owner_cap,
+                AMMO_ITEM_ID,
+                AMMO_QUANTITY,
+                &server_registry,
+                location_proof,
+                ts.ctx(),
+            );
+
+        let inv_ref = &storage_unit.inventory;
+        assert_eq!(inv_ref.used_capacity(), 0);
+        assert_eq!(inv_ref.remaining_capacity(), MAX_CAPACITY);
+        assert_eq!(inv_ref.inventory_item_length(), 0);
+
+        let location_ref = &storage_unit.location;
+        assert_eq!(location_ref.hash(), test_helpers::get_verified_location_hash());
+
+        ts::return_shared(storage_unit);
+        ts::return_to_sender(&ts, owner_cap);
+        ts::return_shared(server_registry);
+    };
+    ts::end(ts);
+}
+
 #[test]
 #[expected_failure(abort_code = inventory::EInventoryInvalidCapacity)]
 fun create_assembly_fail_on_empty_capacity() {
@@ -547,13 +634,11 @@ public fun burn_items_fail_unauthorized_owner() {
         let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
         storage_unit
             .inventory
-            .burn_items(
+            .burn_items_test(
                 status_ref,
                 &owner_cap,
                 AMMO_ITEM_ID,
                 AMMO_QUANTITY,
-                LOCATION_A_HASH,
-                PROOF,
             );
         ts::return_shared(storage_unit);
         ts::return_to_sender(&ts, owner_cap);
@@ -580,13 +665,11 @@ public fun burn_items_fail_item_not_found() {
         let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
         storage_unit
             .inventory
-            .burn_items(
+            .burn_items_test(
                 status_ref,
                 &owner_cap,
                 AMMO_ITEM_ID,
                 AMMO_QUANTITY,
-                LOCATION_A_HASH,
-                PROOF,
             );
         ts::return_shared(storage_unit);
         ts::return_to_sender(&ts, owner_cap);
@@ -615,13 +698,11 @@ public fun burn_items_fail_insufficient_quantity() {
         let owner_cap = ts::take_from_sender<OwnerCap>(&ts);
         storage_unit
             .inventory
-            .burn_items(
+            .burn_items_test(
                 status_ref,
                 &owner_cap,
                 AMMO_ITEM_ID,
                 15u32,
-                LOCATION_A_HASH,
-                PROOF,
             );
         ts::return_shared(storage_unit);
         ts::return_to_sender(&ts, owner_cap);

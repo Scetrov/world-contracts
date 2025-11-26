@@ -22,9 +22,9 @@
 module world::storage_unit;
 
 use std::type_name::{Self, TypeName};
-use sui::event;
+use sui::{clock::Clock, event};
 use world::{
-    authority::{Self, OwnerCap, AdminCap},
+    authority::{Self, OwnerCap, AdminCap, ServerAddressRegistry},
     inventory::{Self, Inventory, Item},
     location::{Self, Location},
     status::{Self, AssemblyStatus, Status}
@@ -60,7 +60,14 @@ public struct StorageUnitCreatedEvent has copy, drop {
     item_id: u64,
 }
 
+// === Public Functions ===
+public fun authorize_extension<Auth: drop>(storage_unit: &mut StorageUnit, owner_cap: &OwnerCap) {
+    assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAccessNotAuthorized);
+    storage_unit.extension.swap_or_fill(type_name::with_defining_ids<Auth>());
+}
+
 // === View Functions ===
+
 public fun status(storage_unit: &StorageUnit): &AssemblyStatus {
     &storage_unit.status
 }
@@ -71,12 +78,6 @@ public fun location(storage_unit: &StorageUnit): &Location {
 
 public fun inventory(storage_unit: &StorageUnit): &Inventory {
     &storage_unit.inventory
-}
-
-// === Public Functions ===
-public fun authorize_extension<Auth: drop>(storage_unit: &mut StorageUnit, owner_cap: &OwnerCap) {
-    assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAccessNotAuthorized);
-    storage_unit.extension.swap_or_fill(type_name::with_defining_ids<Auth>());
 }
 
 // === Admin Functions ===
@@ -122,8 +123,7 @@ public fun online(storage_unit: &mut StorageUnit, owner_cap: &OwnerCap) {
     storage_unit.status.online(owner_cap);
 }
 
-// Should we rename the function ?
-public fun game_to_chain_inventory(
+public fun game_item_to_chain_inventory(
     storage_unit: &mut StorageUnit,
     admin_cap: &AdminCap,
     item_id: u64,
@@ -144,6 +144,31 @@ public fun game_to_chain_inventory(
             storage_unit.location.hash(),
             ctx,
         )
+}
+
+public fun chain_item_to_game_inventory(
+    storage_unit: &mut StorageUnit,
+    server_registry: &ServerAddressRegistry,
+    location_proof: vector<u8>,
+    owner_cap: &OwnerCap,
+    item_id: u64,
+    quantity: u32,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    storage_unit
+        .inventory
+        .burn_items_with_proof(
+            &storage_unit.status,
+            &storage_unit.location,
+            owner_cap,
+            item_id,
+            quantity,
+            server_registry,
+            location_proof,
+            clock,
+            ctx,
+        );
 }
 
 public fun deposit_item<Auth: drop>(
@@ -178,10 +203,26 @@ public fun deposit_by_owner(
     storage_unit: &mut StorageUnit,
     item: Item,
     owner_cap: &OwnerCap,
-    _: &mut TxContext,
+    server_registry: &ServerAddressRegistry,
+    proximity_proof: vector<u8>,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
     assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAccessNotAuthorized);
-    // do a proximity check to see if the item location and the storage unit have the same location.
+
+    // This check is only required for ephemeral inventory
+    location::verify_same_location(
+        storage_unit.location.hash(),
+        item.get_item_location_hash(),
+    );
+
+    location::verify_location_proof_as_bytes(
+        &storage_unit.location,
+        proximity_proof,
+        server_registry,
+        clock,
+        ctx,
+    );
     storage_unit.inventory.deposit_item(item);
 }
 
@@ -189,10 +230,20 @@ public fun withdraw_by_owner(
     storage_unit: &mut StorageUnit,
     owner_cap: &OwnerCap,
     item_id: u64,
-    _: &mut TxContext,
+    server_registry: &ServerAddressRegistry,
+    proximity_proof: vector<u8>,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ): Item {
     assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAccessNotAuthorized);
-    // do a proximity check to see if the item location and the storage unit have the same location.
+    location::verify_location_proof_as_bytes(
+        &storage_unit.location,
+        proximity_proof,
+        server_registry,
+        clock,
+        ctx,
+    );
+
     storage_unit.inventory.withdraw_item(item_id)
 }
 
@@ -217,4 +268,28 @@ public fun item_quantity(storage_unit: &StorageUnit, item_id: u64): u32 {
 #[test_only]
 public fun contains_item(storage_unit: &StorageUnit, item_id: u64): bool {
     storage_unit.inventory.contains_item(item_id)
+}
+
+#[test_only]
+public fun chain_item_to_game_inventory_test(
+    storage_unit: &mut StorageUnit,
+    server_registry: &ServerAddressRegistry,
+    location_proof: vector<u8>,
+    owner_cap: &OwnerCap,
+    item_id: u64,
+    quantity: u32,
+    ctx: &mut TxContext,
+) {
+    storage_unit
+        .inventory
+        .burn_items_with_proof_test(
+            &storage_unit.status,
+            &storage_unit.location,
+            owner_cap,
+            item_id,
+            quantity,
+            server_registry,
+            location_proof,
+            ctx,
+        );
 }

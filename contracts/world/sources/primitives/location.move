@@ -1,64 +1,300 @@
-/// This module stores the location hash for location validation.
-/// This can be attached to any structure in game, eg: inventory, item, ship etc.
+/// Location verification module for validating proximity using signature verification.
+///
+/// This module provides location hash storage and validation functionality that can be
+/// attached to any game structure (e.g., inventory, item, ship, etc.). It enables
+/// proximity-based access control by verifying that a player is in proximity
+/// to a structure before allowing interactions.
 module world::location;
 
-use world::authority::AdminCap;
+use sui::{bcs, clock::Clock};
+use world::{authority::{Self, AdminCap, ServerAddressRegistry}, sig_verify};
 
 // === Errors ===
 #[error(code = 0)]
 const ENotInProximity: vector<u8> = b"Structures are not in proximity";
 #[error(code = 1)]
 const EInvalidHashLength: vector<u8> = b"Invalid length for SHA256";
+#[error(code = 2)]
+const EUnverifiedSender: vector<u8> = b"The proof was not signed for the sender";
+#[error(code = 3)]
+const EInvalidLocationHash: vector<u8> = b"Invalid location hash";
+#[error(code = 4)]
+const EUnauthorizedServer: vector<u8> = b"Message signed by unauthorized server";
+#[error(code = 5)]
+const ESignatureVerificationFailed: vector<u8> = b"Signature verification failed";
 
 // === Structs ===
+
+/// Represents a location hash attached to a game structure.
+/// The location_hash should be a Poseidon2 hash of the location coordinates.
+/// See: https://docs.sui.io/references/framework/sui_sui/poseidon
 public struct Location has store {
     structure_id: ID,
-    location_hash: vector<u8>, //TODO: do a wrapper for custom hash for type safety later
+    location_hash: vector<u8>,
+}
+
+/// A signed message containing location proof information.
+/// This message is signed by an authorized server to prove that a player
+/// is within proximity of a target structure.
+///
+/// # Arguments
+/// * `server_address` - The address of the server that signed the message
+/// * `player_address` - The address of the player to whom the proof is issued
+/// * `source_structure_id` - The ID of the structure initiating the interaction
+/// * `source_location_hash` - The hash of the source structure's location. eg: ship/gate location
+/// * `target_structure_id` - The ID of the structure the player wants to interact with
+/// * `target_location_hash` - The hash of the target structure's location
+/// * `distance` - The distance between player and target structure
+/// * `data` - Additional data field
+/// * `timestamp_ms` - timestamp in milliseconds
+public struct LocationProofMessage has drop {
+    server_address: address,
+    player_address: address,
+    source_structure_id: ID,
+    source_location_hash: vector<u8>,
+    target_structure_id: ID,
+    target_location_hash: vector<u8>,
+    distance: u64,
+    data: vector<u8>,
+    timestamp_ms: u64,
+    // Should we add a nonce to prevent replay attack ?
+}
+
+/// A complete location proof containing the message and its signature.
+public struct LocationProof has drop {
+    message: LocationProofMessage,
+    signature: vector<u8>,
 }
 
 // === Public Functions ===
 
-// TODO: Should we also add distance param ?
-/// Verifies if the locations are in proximity.
-/// `proof` - Cryptographic proof of proximity. Currently: Signature from trusted server. Future: Zero-knowledge proof.
-public fun verify_proximity(location_a: &Location, location_b: &Location, proof: vector<u8>) {
+public fun create_location_proof(
+    server_address: address,
+    player_address: address,
+    source_structure_id: ID,
+    source_location_hash: vector<u8>,
+    target_structure_id: ID,
+    target_location_hash: vector<u8>,
+    distance: u64,
+    data: vector<u8>,
+    timestamp_ms: u64,
+    signature: vector<u8>,
+): LocationProof {
+    let message = LocationProofMessage {
+        server_address,
+        player_address,
+        source_structure_id,
+        source_location_hash,
+        target_structure_id,
+        target_location_hash,
+        distance,
+        data,
+        timestamp_ms,
+    };
+
+    LocationProof {
+        message,
+        signature,
+    }
+}
+
+/// Verify that a server-signed proof attesting a player is near a structure
+/// This function gets `proof` LocationProof as struct
+public fun verify_location_proof_as_struct(
+    location: &Location,
+    proof: LocationProof,
+    server_registry: &ServerAddressRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let LocationProof {
+        message,
+        signature,
+    } = proof;
+
+    validate_proof_message(&message, location, server_registry, ctx.sender());
+
+    let message_bytes = bcs::to_bytes(&message);
     assert!(
-        in_proximity(location_a.location_hash, location_b.location_hash, proof),
-        ENotInProximity,
+        sig_verify::verify_signature_with_deadline(
+            message_bytes,
+            signature,
+            message.server_address,
+            message.timestamp_ms,
+            clock,
+        ),
+        ESignatureVerificationFailed,
     );
 }
 
-// === View Functions ===
-public fun in_proximity(_: vector<u8>, _: vector<u8>, _: vector<u8>): bool {
-    //TODO: check location_a and location_b is in same location
-    //TODO: verify the signature proof against a trusted server key
-    true
+/// Verify that a server-signed proof attesting a player is near a structure.
+/// This function gets `proof_bytes` the LocationProof as bytes and deserializes it using `peel_*` functions.
+public fun verify_location_proof_as_bytes(
+    location: &Location,
+    proof_bytes: vector<u8>,
+    server_registry: &ServerAddressRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let (message, signature) = unpack_proof(proof_bytes);
+
+    validate_proof_message(&message, location, server_registry, ctx.sender());
+
+    let message_bytes = bcs::to_bytes(&message);
+    assert!(
+        sig_verify::verify_signature_with_deadline(
+            message_bytes,
+            signature,
+            message.server_address,
+            message.timestamp_ms,
+            clock,
+        ),
+        ESignatureVerificationFailed,
+    );
 }
+
+/// Verifies if two locations are in proximity based on their hashes.
+///
+/// It is used for ephemeral storage operations where both inventory are in the same location
+public fun verify_same_location(location_a_hash: vector<u8>, location_b_hash: vector<u8>) {
+    assert!(location_a_hash == location_b_hash, ENotInProximity);
+}
+
+// === View Functions ===
 
 public fun hash(location: &Location): vector<u8> {
     location.location_hash
 }
 
 // === Admin Functions ===
-public fun update_location(location: &mut Location, _: &AdminCap, location_hash: vector<u8>) {
+
+public fun update_location(
+    location: &mut Location,
+    _admin_cap: &AdminCap,
+    location_hash: vector<u8>,
+) {
     assert!(location_hash.length() == 32, EInvalidHashLength);
     location.location_hash = location_hash;
 }
 
 // === Package Functions ===
-// Accepts a pre computed hash to preserve privacy
+
 public(package) fun attach_location(
-    _: &AdminCap,
+    _admin_cap: &AdminCap,
     structure_id: ID,
     location_hash: vector<u8>,
 ): Location {
     assert!(location_hash.length() == 32, EInvalidHashLength);
     Location {
-        structure_id: structure_id,
-        location_hash: location_hash,
+        structure_id,
+        location_hash,
     }
 }
 
 public(package) fun remove_location(location: Location) {
     let Location { structure_id: _, location_hash: _ } = location;
+}
+
+// === Private Functions ===
+
+/// Validates the location proof message against the provided location and context.
+fun validate_proof_message(
+    message: &LocationProofMessage,
+    expected_location: &Location,
+    server_registry: &ServerAddressRegistry,
+    sender: address,
+) {
+    assert!(
+        authority::is_authorized_server_address(server_registry, message.server_address),
+        EUnauthorizedServer,
+    );
+    assert!(message.player_address == sender, EUnverifiedSender);
+    assert!(message.target_location_hash == expected_location.location_hash, EInvalidLocationHash);
+}
+
+/// Deserializes a LocationProof from bytes using BCS peel functions.
+///
+/// BCS serializes structs field-by-field, so we peel each field in order:
+/// 1. LocationProofMessage fields (server_address, player_address, etc.)
+/// 2. signature (vector<u8>)
+fun unpack_proof(proof_bytes: vector<u8>): (LocationProofMessage, vector<u8>) {
+    let mut bcs_data = bcs::new(proof_bytes);
+
+    // Deserialize LocationProofMessage fields
+    let server_address = bcs::peel_address(&mut bcs_data);
+    let player_address = bcs::peel_address(&mut bcs_data);
+    let source_structure_id = object::id_from_address(bcs::peel_address(&mut bcs_data));
+    let source_location_hash = bcs::peel_vec!(&mut bcs_data, |bcs| bcs::peel_u8(bcs));
+    let target_structure_id = object::id_from_address(bcs::peel_address(&mut bcs_data));
+    let target_location_hash = bcs::peel_vec!(&mut bcs_data, |bcs| bcs::peel_u8(bcs));
+    let distance = bcs::peel_u64(&mut bcs_data);
+    let data = bcs::peel_vec!(&mut bcs_data, |bcs| bcs::peel_u8(bcs));
+    let timestamp_ms = bcs::peel_u64(&mut bcs_data);
+
+    // Deserialize signature
+    let signature = bcs::peel_vec!(&mut bcs_data, |bcs| bcs::peel_u8(bcs));
+
+    let message = LocationProofMessage {
+        server_address,
+        player_address,
+        source_structure_id,
+        source_location_hash,
+        target_structure_id,
+        target_location_hash,
+        distance,
+        data,
+        timestamp_ms,
+    };
+    (message, signature)
+}
+
+// === Test Functions ===
+
+/// Verifies a location proof without deadline validation (test-only).
+///
+/// This function is provided for testing purposes because Move does not have
+/// built-in signing functionality. Messages signed offline need to be hardcoded
+/// in tests, which means deadlines will always expire unless we set a never-expiring
+/// deadline. This function bypasses deadline validation for testing convenience.
+#[test_only]
+public fun verify_location_proof_as_struct_without_deadline(
+    location: &Location,
+    proof: LocationProof,
+    server_registry: &ServerAddressRegistry,
+    ctx: &mut TxContext,
+): bool {
+    let LocationProof {
+        message,
+        signature,
+    } = proof;
+
+    validate_proof_message(&message, location, server_registry, ctx.sender());
+
+    let message_bytes = bcs::to_bytes(&message);
+    sig_verify::verify_signature(
+        message_bytes,
+        signature,
+        message.server_address,
+    )
+}
+
+#[test_only]
+public fun verify_location_proof_as_bytes_without_deadline(
+    location: &Location,
+    proof_bytes: vector<u8>,
+    server_registry: &ServerAddressRegistry,
+    ctx: &mut TxContext,
+) {
+    let (message, signature) = unpack_proof(proof_bytes);
+    validate_proof_message(&message, location, server_registry, ctx.sender());
+
+    let message_bytes = bcs::to_bytes(&message);
+    assert!(
+        sig_verify::verify_signature(
+            message_bytes,
+            signature,
+            message.server_address,
+        ),
+        ESignatureVerificationFailed,
+    );
 }
