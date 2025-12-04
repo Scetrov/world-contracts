@@ -6,14 +6,10 @@
 module world::status;
 
 use sui::event;
-use world::authority::{Self, OwnerCap, AdminCap};
 
 // === Errors ===
 #[error(code = 0)]
 const EAssemblyInvalidStatus: vector<u8> = b"Assembly status is invalid";
-
-#[error(code = 1)]
-const EAssemblyNotAuthorized: vector<u8> = b"Assembly access not authorized";
 
 // === Structs ===
 public enum Status has copy, drop, store {
@@ -44,43 +40,6 @@ public struct StatusChangedEvent has copy, drop {
     action: Action,
 }
 
-// === Public Functions ===
-
-/// Online an assembly
-public fun online(assembly_status: &mut AssemblyStatus, owner_cap: &OwnerCap) {
-    assert!(assembly_status.status == Status::OFFLINE, EAssemblyInvalidStatus);
-    assert!(
-        authority::is_authorized(owner_cap, assembly_status.assembly_id),
-        EAssemblyNotAuthorized,
-    );
-    // TODO: Check if it has enough reserved energy to online, else revert
-    assembly_status.status = Status::ONLINE;
-    event::emit(StatusChangedEvent {
-        assembly_id: assembly_status.assembly_id,
-        status: assembly_status.status,
-        item_id: assembly_status.item_id,
-        action: Action::ONLINE,
-    });
-}
-
-// TODO: On offline, it should release the reserved energy. Can be done in 2 ways
-// 1. a hot potato pattern to ensure its done in PTB. 2. Call a release energy function implemented in energy module
-/// Offline an assembly
-public fun offline(assembly_status: &mut AssemblyStatus, owner_cap: &OwnerCap) {
-    assert!(assembly_status.status == Status::ONLINE, EAssemblyInvalidStatus);
-    assert!(
-        authority::is_authorized(owner_cap, assembly_status.assembly_id),
-        EAssemblyNotAuthorized,
-    );
-    assembly_status.status = Status::OFFLINE;
-    event::emit(StatusChangedEvent {
-        assembly_id: assembly_status.assembly_id,
-        status: assembly_status.status,
-        item_id: assembly_status.item_id,
-        action: Action::OFFLINE,
-    });
-}
-
 // === View Functions ===
 
 public fun status(assembly_status: &AssemblyStatus): Status {
@@ -97,12 +56,7 @@ public fun is_online(assembly_status: &AssemblyStatus): bool {
 
 // === Package Functions ===
 /// Anchors an assmebly and returns an instance of the status
-public(package) fun anchor(
-    _: &AdminCap,
-    assembly_id: ID,
-    type_id: u64,
-    item_id: u64,
-): AssemblyStatus {
+public(package) fun anchor(assembly_id: ID, type_id: u64, item_id: u64): AssemblyStatus {
     let assembly_status = AssemblyStatus {
         assembly_id: assembly_id,
         status: Status::OFFLINE,
@@ -135,6 +89,35 @@ public(package) fun unanchor(assembly_status: AssemblyStatus) {
     });
 
     let AssemblyStatus { assembly_id: _, status: _, type_id: _, item_id: _ } = assembly_status;
+}
+
+/// Online an assembly
+public(package) fun online(assembly_status: &mut AssemblyStatus) {
+    assert!(assembly_status.status == Status::OFFLINE, EAssemblyInvalidStatus);
+
+    // TODO: Check if it has enough reserved energy to online, else revert
+    assembly_status.status = Status::ONLINE;
+    event::emit(StatusChangedEvent {
+        assembly_id: assembly_status.assembly_id,
+        status: assembly_status.status,
+        item_id: assembly_status.item_id,
+        action: Action::ONLINE,
+    });
+}
+
+// TODO: On offline, it should release the reserved energy. Can be done in 2 ways
+// 1. a hot potato pattern to ensure its done in PTB. 2. Call a release energy function implemented in energy module
+/// Offline an assembly
+public(package) fun offline(assembly_status: &mut AssemblyStatus) {
+    assert!(assembly_status.status == Status::ONLINE, EAssemblyInvalidStatus);
+
+    assembly_status.status = Status::OFFLINE;
+    event::emit(StatusChangedEvent {
+        assembly_id: assembly_status.assembly_id,
+        status: assembly_status.status,
+        item_id: assembly_status.item_id,
+        action: Action::OFFLINE,
+    });
 }
 
 // === Test Functions ===

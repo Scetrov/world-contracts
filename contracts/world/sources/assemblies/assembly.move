@@ -4,7 +4,7 @@ module world::assembly;
 
 use sui::{derived_object, event};
 use world::{
-    authority::{AdminCap, OwnerCap},
+    authority::{Self, AdminCap, OwnerCap},
     location::{Self, Location},
     metadata::Metadata,
     status::{Self, AssemblyStatus}
@@ -17,6 +17,8 @@ const EAssemblyTypeIdEmpty: vector<u8> = b"Assembly TypeId is empty";
 const EAssemblyItemIdEmpty: vector<u8> = b"Assembly ItemId is empty";
 #[error(code = 2)]
 const EAssemblyAlreadyExists: vector<u8> = b"Assembly with this ItemId already exists";
+#[error(code = 3)]
+const EAssemblyNotAuthorized: vector<u8> = b"Assembly access not authorized";
 
 // === Structs ===
 public struct AssemblyRegistry has key {
@@ -33,6 +35,7 @@ public struct Assembly has key {
     metadata: Option<Metadata>,
 }
 
+// === Events ===
 public struct AssemblyCreatedEvent has copy, drop {
     assembly_id: ID,
     type_id: u64,
@@ -48,11 +51,13 @@ fun init(ctx: &mut TxContext) {
 
 // === Public Functions ===
 public fun online(assembly: &mut Assembly, owner_cap: &OwnerCap) {
-    assembly.status.online(owner_cap);
+    assert!(authority::is_authorized(owner_cap, object::id(assembly)), EAssemblyNotAuthorized);
+    assembly.status.online();
 }
 
 public fun offline(assembly: &mut Assembly, owner_cap: &OwnerCap) {
-    assembly.status.offline(owner_cap);
+    assert!(authority::is_authorized(owner_cap, object::id(assembly)), EAssemblyNotAuthorized);
+    assembly.status.offline();
 }
 
 // === View Functions ===
@@ -63,7 +68,7 @@ public fun status(assembly: &Assembly): &AssemblyStatus {
 // === Admin Functions ===
 public fun anchor(
     assembly_registry: &mut AssemblyRegistry,
-    admin_cap: &AdminCap,
+    _: &AdminCap,
     type_id: u64,
     item_id: u64,
     volume: u64,
@@ -81,8 +86,8 @@ public fun anchor(
         type_id,
         item_id,
         volume,
-        status: status::anchor(admin_cap, assembly_id, type_id, item_id),
-        location: location::attach(admin_cap, assembly_id, location_hash),
+        status: status::anchor(assembly_id, type_id, item_id),
+        location: location::attach(assembly_id, location_hash),
         metadata: option::none(),
     };
 
