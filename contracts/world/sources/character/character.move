@@ -7,7 +7,11 @@ module world::character;
 
 use std::string::String;
 use sui::{derived_object, event};
-use world::{authority::{Self, OwnerCap, AdminCap}, game_id::{Self, GameId}};
+use world::{
+    authority::{Self, AdminCap},
+    game_id::{Self, DerivationKey},
+    metadata::{Self, Metadata}
+};
 
 #[error(code = 0)]
 const EGameCharacterIdEmpty: vector<u8> = b"Game character ID is empty";
@@ -18,14 +22,11 @@ const ETribeIdEmpty: vector<u8> = b"Tribe ID is empty";
 #[error(code = 2)]
 const ECharacterAlreadyExists: vector<u8> = b"Character with this game character ID already exists";
 
-#[error(code = 3)]
-const ECharacterNotAuthorized: vector<u8> = b"Character not authorized";
-
 #[error(code = 4)]
-const ECharacterNameEmpty: vector<u8> = b"Character name cannot be empty";
+const ETenantEmpty: vector<u8> = b"Tenant name cannot be empty";
 
 #[error(code = 5)]
-const ETenantEmpty: vector<u8> = b"Tenant name cannot be empty";
+const EAddressEmpty: vector<u8> = b"Address name cannot be empty";
 
 public struct CharacterRegistry has key {
     id: UID,
@@ -33,19 +34,17 @@ public struct CharacterRegistry has key {
 
 public struct Character has key {
     id: UID,
-    key: GameId,
+    key: DerivationKey, // The derivation key used to generate the character's object ID
     tribe_id: u32,
-    name: String,
+    metadata: Option<Metadata>,
 }
 
 // Events
 public struct CharacterCreatedEvent has copy, drop {
     character_id: ID,
-    game_character_id: u32,
-    tenant: String,
+    key: DerivationKey,
     tribe_id: u32,
-    // TODO : use metadata instead
-    name: String,
+    character_address: address,
 }
 
 fun init(ctx: &mut TxContext) {
@@ -54,27 +53,20 @@ fun init(ctx: &mut TxContext) {
     });
 }
 
-// === Public Functions ===
-public fun rename_character(character: &mut Character, owner_cap: &OwnerCap, name: String) {
-    assert!(authority::is_authorized(owner_cap, object::id(character)), ECharacterNotAuthorized);
-    assert!(name.length() > 0, ECharacterNameEmpty);
-
-    // TODO: emit events
-    character.name = name;
-}
-
 // === Admin Functions ===
 public fun create_character(
     registry: &mut CharacterRegistry,
-    _: &AdminCap,
+    admin_cap: &AdminCap,
     game_character_id: u32,
     tenant: String,
     tribe_id: u32,
+    character_address: address,
     name: String,
-    _: &mut TxContext,
+    ctx: &mut TxContext,
 ): Character {
     assert!(game_character_id != 0, EGameCharacterIdEmpty);
     assert!(tribe_id != 0, ETribeIdEmpty);
+    assert!(character_address != @0x0, EAddressEmpty);
     assert!(tenant.length() > 0, ETenantEmpty);
 
     // Claim a derived UID using the game character id and tenant id as the key
@@ -83,18 +75,30 @@ public fun create_character(
     let character_key = game_id::create_key(game_character_id as u64, tenant);
     assert!(!derived_object::exists(&registry.id, character_key), ECharacterAlreadyExists);
     let character_uid = derived_object::claim(&mut registry.id, character_key);
+    let character_id = object::uid_to_inner(&character_uid);
     let character = Character {
         id: character_uid,
         key: character_key,
-        tribe_id: tribe_id,
-        name: name,
+        tribe_id,
+        metadata: std::option::some(
+            metadata::create_metadata(
+                character_id,
+                game_character_id as u64,
+                name,
+                b"".to_string(),
+                b"".to_string(),
+            ),
+        ),
     };
+
+    let owner_cap = authority::create_owner_cap(admin_cap, character_id, ctx);
+    authority::transfer_owner_cap(owner_cap, character_address, ctx);
+
     event::emit(CharacterCreatedEvent {
         character_id: object::id(&character),
-        game_character_id: game_character_id,
-        tenant: tenant,
-        tribe_id: tribe_id,
-        name: name,
+        key: character_key,
+        tribe_id,
+        character_address,
     });
     character
 }
@@ -105,21 +109,24 @@ public fun share_character(character: Character, _: &AdminCap) {
 
 public fun update_tribe(character: &mut Character, _: &AdminCap, tribe_id: u32) {
     assert!(tribe_id != 0, ETribeIdEmpty);
-    // TODO: emit events
     character.tribe_id = tribe_id;
 }
 
 // for emergencies
 public fun update_tenent_id(character: &mut Character, _: &AdminCap, tenant: String) {
     assert!(tenant.length() > 0, ETenantEmpty);
-    // TODO: emit events
-    let current_id = game_id::id(&character.key);
+    let current_id = game_id::item_id(&character.key);
     character.key = game_id::create_key(current_id, tenant);
 }
 
 public fun delete_character(character: Character, _: &AdminCap) {
-    let Character { id, .. } = character;
-    // TODO: emit events
+    let Character { id, metadata, .. } = character;
+    if (std::option::is_some(&metadata)) {
+        let m = std::option::destroy_some(metadata);
+        metadata::delete(m);
+    } else {
+        std::option::destroy_none(metadata);
+    };
     id.delete();
 }
 
@@ -136,7 +143,7 @@ public fun id(character: &Character): ID {
 
 #[test_only]
 public fun game_character_id(character: &Character): u32 {
-    game_id::id(&character.key) as u32
+    game_id::item_id(&character.key) as u32
 }
 
 #[test_only]
@@ -146,10 +153,16 @@ public fun tribe_id(character: &Character): u32 {
 
 #[test_only]
 public fun name(character: &Character): String {
-    character.name
+    let metadata = std::option::borrow(&character.metadata);
+    metadata::name(metadata)
 }
 
 #[test_only]
 public fun tenant(character: &Character): String {
     game_id::tenant(&character.key)
+}
+
+#[test_only]
+public fun mutable_metadata(character: &mut Character): &mut Metadata {
+    std::option::borrow_mut(&mut character.metadata)
 }
