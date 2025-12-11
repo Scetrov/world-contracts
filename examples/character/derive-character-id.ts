@@ -7,20 +7,20 @@ export function deriveCharacterId(
     tenant: string,
     packageId: string
 ): string {
-    const GameId = bcs.struct("GameId", {
+    const TenantItemId = bcs.struct("TenantItemId", {
         id: bcs.u64(),
         tenant: bcs.string(),
     });
 
-    const gameIdValue = {
+    const TenantItemIdValue = {
         id: BigInt(gameCharacterId),
         tenant: tenant,
     };
-    const serializedKey = GameId.serialize(gameIdValue).toBytes();
-    const gameIdTypeTag = `${packageId}::game_id::GameId`;
+    const serializedKey = TenantItemId.serialize(TenantItemIdValue).toBytes();
+    const TenantItemIdTypeTag = `${packageId}::in_game_id::TenantItemId`;
 
     // Use the SDK's deriveObjectID function
-    // This internally constructs: 0x2::derived_object::DerivedObjectKey<gameIdTypeTag>
+    // This internally constructs: 0x2::derived_object::DerivedObjectKey<TenantItemIdTypeTag>
     // and derives the object ID using the same formula as Move
-    return deriveObjectID(registryId, gameIdTypeTag, serializedKey);
+    return deriveObjectID(registryId, TenantItemIdTypeTag, serializedKey);
 }
