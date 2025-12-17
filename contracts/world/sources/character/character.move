@@ -36,6 +36,7 @@ public struct Character has key {
     id: UID,
     key: TenantItemId, // The derivation key used to generate the character's object ID
     tribe_id: u32,
+    character_address: address,
     metadata: Option<Metadata>,
 }
 
@@ -51,6 +52,19 @@ fun init(ctx: &mut TxContext) {
     transfer::share_object(CharacterRegistry {
         id: object::new(ctx),
     });
+}
+
+// === View Functions ===
+public fun id(character: &Character): ID {
+    object::id(character)
+}
+
+public fun character_address(character: &Character): address {
+    character.character_address
+}
+
+public fun tenant(character: &Character): String {
+    in_game_id::tenant(&character.key)
 }
 
 // === Admin Functions ===
@@ -80,6 +94,7 @@ public fun create_character(
         id: character_uid,
         key: character_key,
         tribe_id,
+        character_address,
         metadata: std::option::some(
             metadata::create_metadata(
                 character_id,
@@ -91,7 +106,7 @@ public fun create_character(
         ),
     };
 
-    let owner_cap = authority::create_owner_cap(admin_cap, character_id, ctx);
+    let owner_cap = authority::create_owner_cap(admin_cap, &character, ctx);
     authority::transfer_owner_cap(owner_cap, character_address, ctx);
 
     event::emit(CharacterCreatedEvent {
@@ -110,6 +125,11 @@ public fun share_character(character: Character, _: &AdminCap) {
 public fun update_tribe(character: &mut Character, _: &AdminCap, tribe_id: u32) {
     assert!(tribe_id != 0, ETribeIdEmpty);
     character.tribe_id = tribe_id;
+}
+
+public fun update_address(character: &mut Character, _: &AdminCap, character_address: address) {
+    assert!(character_address != @0x0, EAddressEmpty);
+    character.character_address = character_address;
 }
 
 // for emergencies
@@ -137,11 +157,6 @@ public fun init_for_testing(ctx: &mut TxContext) {
 }
 
 #[test_only]
-public fun id(character: &Character): ID {
-    object::id(character)
-}
-
-#[test_only]
 public fun game_character_id(character: &Character): u32 {
     in_game_id::item_id(&character.key) as u32
 }
@@ -155,11 +170,6 @@ public fun tribe_id(character: &Character): u32 {
 public fun name(character: &Character): String {
     let metadata = std::option::borrow(&character.metadata);
     metadata::name(metadata)
-}
-
-#[test_only]
-public fun tenant(character: &Character): String {
-    in_game_id::tenant(&character.key)
 }
 
 #[test_only]
