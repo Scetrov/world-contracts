@@ -1,10 +1,11 @@
 #[test_only]
-module world::authority_tests;
+module world::access_tests;
 
 use std::unit_test::assert_eq;
 use sui::test_scenario as ts;
 use world::{
-    authority::{Self, AdminCap, OwnerCap},
+    access::{Self, AdminCap, OwnerCap},
+    character::{Self, Character, CharacterRegistry},
     test_helpers::{Self, TestObject, governor, admin, user_a, user_b},
     world::{Self, GovernorCap}
 };
@@ -24,7 +25,7 @@ fun create_and_delete_admin_cap() {
     ts::next_tx(&mut ts, governor());
     {
         let gov_cap = ts::take_from_sender<GovernorCap>(&ts);
-        authority::create_admin_cap(&gov_cap, admin, ts::ctx(&mut ts));
+        access::create_admin_cap(&gov_cap, admin, ts::ctx(&mut ts));
 
         ts::return_to_sender(&ts, gov_cap);
     };
@@ -34,7 +35,7 @@ fun create_and_delete_admin_cap() {
         let gov_cap = ts::take_from_sender<GovernorCap>(&ts);
         let admin_cap = ts::take_from_address<AdminCap>(&ts, admin);
 
-        authority::delete_admin_cap(admin_cap, &gov_cap);
+        access::delete_admin_cap(admin_cap, &gov_cap);
 
         ts::return_to_sender(&ts, gov_cap);
     };
@@ -57,7 +58,7 @@ fun create_transfer_and_delete_owner_cap() {
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
 
         // Only possible in tests
-        authority::delete_owner_cap(owner_cap, &admin_cap);
+        access::delete_owner_cap(owner_cap, &admin_cap);
 
         ts::return_to_sender(&ts, admin_cap);
     };
@@ -81,9 +82,9 @@ fun owner_cap_authorization_after_transfer() {
         let owner_cap = ts::take_from_sender<OwnerCap<TestObject>>(&ts);
 
         // Should be authorized for the correct object
-        assert_eq!(authority::is_authorized<TestObject>(&owner_cap, target_object_id), true);
+        assert_eq!(access::is_authorized<TestObject>(&owner_cap, target_object_id), true);
         // Should NOT be authorized for a different object
-        assert_eq!(authority::is_authorized<TestObject>(&owner_cap, wrong_object_id), false);
+        assert_eq!(access::is_authorized<TestObject>(&owner_cap, wrong_object_id), false);
 
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -108,7 +109,7 @@ fun owner_cap_authorisation_fail_after_transfer() {
     {
         let owner_cap = ts::take_from_sender<OwnerCap<TestObject>>(&ts);
         // Should be authorized for the correct object
-        assert_eq!(authority::is_authorized<TestObject>(&owner_cap, target_object_id), true);
+        assert_eq!(access::is_authorized<TestObject>(&owner_cap, target_object_id), true);
 
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -119,7 +120,7 @@ fun owner_cap_authorisation_fail_after_transfer() {
     ts::next_tx(&mut ts, user_a());
     {
         let owner_cap = ts::take_from_sender<OwnerCap<TestObject>>(&ts);
-        authority::transfer_owner_cap<TestObject>(owner_cap, user_b(), ts.ctx());
+        access::transfer_owner_cap<TestObject>(owner_cap, user_b(), ts.ctx());
     };
 
     ts::next_tx(&mut ts, user_a());
@@ -129,5 +130,40 @@ fun owner_cap_authorisation_fail_after_transfer() {
         ts::return_to_sender(&ts, owner_cap);
     };
 
+    abort
+}
+
+#[test]
+#[expected_failure(abort_code = access::ECharacterTransfer)]
+fun character_owner_cap_transfer_fail() {
+    let mut ts = ts::begin(governor());
+    test_helpers::setup_world(&mut ts);
+
+    // Create a character which also creates a OwnerCap to mutate the Character object
+    ts::next_tx(&mut ts, admin());
+    {
+        let admin_cap = ts::take_from_sender<AdminCap>(&ts);
+        let mut registry = ts::take_shared<CharacterRegistry>(&ts);
+        let character = character::create_character(
+            &mut registry,
+            &admin_cap,
+            1005,
+            b"TEST".to_string(),
+            100,
+            user_a(),
+            b"name".to_string(),
+            ts.ctx(),
+        );
+        character::share_character(character, &admin_cap);
+        ts::return_shared(registry);
+        ts::return_to_sender(&ts, admin_cap);
+    };
+
+    // Transfer Character OwnerCap should fail
+    ts::next_tx(&mut ts, user_a());
+    {
+        let owner_cap = ts::take_from_sender<OwnerCap<Character>>(&ts);
+        access::transfer_owner_cap<Character>(owner_cap, user_b(), ts.ctx());
+    };
     abort
 }

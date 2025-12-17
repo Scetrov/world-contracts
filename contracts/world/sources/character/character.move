@@ -7,11 +7,7 @@ module world::character;
 
 use std::string::String;
 use sui::{derived_object, event};
-use world::{
-    authority::{Self, AdminCap},
-    in_game_id::{Self, TenantItemId},
-    metadata::{Self, Metadata}
-};
+use world::{access::{Self, AdminCap}, in_game_id::{Self, TenantItemId}, metadata::{Self, Metadata}};
 
 #[error(code = 0)]
 const EGameCharacterIdEmpty: vector<u8> = b"Game character ID is empty";
@@ -22,11 +18,11 @@ const ETribeIdEmpty: vector<u8> = b"Tribe ID is empty";
 #[error(code = 2)]
 const ECharacterAlreadyExists: vector<u8> = b"Character with this game character ID already exists";
 
-#[error(code = 4)]
+#[error(code = 3)]
 const ETenantEmpty: vector<u8> = b"Tenant name cannot be empty";
 
-#[error(code = 5)]
-const EAddressEmpty: vector<u8> = b"Address name cannot be empty";
+#[error(code = 4)]
+const EAddressEmpty: vector<u8> = b"Address cannot be empty";
 
 public struct CharacterRegistry has key {
     id: UID,
@@ -106,8 +102,12 @@ public fun create_character(
         ),
     };
 
-    let owner_cap = authority::create_owner_cap(admin_cap, &character, ctx);
-    authority::transfer_owner_cap(owner_cap, character_address, ctx);
+    access::create_and_transfer_owner_cap<Character>(
+        admin_cap,
+        character_id,
+        character_address,
+        ctx,
+    );
 
     event::emit(CharacterCreatedEvent {
         character_id: object::id(&character),
@@ -133,7 +133,7 @@ public fun update_address(character: &mut Character, _: &AdminCap, character_add
 }
 
 // for emergencies
-public fun update_tenent_id(character: &mut Character, _: &AdminCap, tenant: String) {
+public fun update_tenant_id(character: &mut Character, _: &AdminCap, tenant: String) {
     assert!(tenant.length() > 0, ETenantEmpty);
     let current_id = in_game_id::item_id(&character.key);
     character.key = in_game_id::create_key(current_id, tenant);

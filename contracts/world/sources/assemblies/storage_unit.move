@@ -18,14 +18,13 @@
 ///    - Ships will handle owner-controlled inventory operations in the future
 ///
 /// Future pattern: Storage Units (extension-controlled), Ships (owner-controlled)
-/// Example on how a storage unit can be customised : //todo:
 module world::storage_unit;
 
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, derived_object, dynamic_field as df, event};
 use world::{
+    access::{Self, OwnerCap, AdminCap, ServerAddressRegistry},
     assembly::{Self, AssemblyRegistry},
-    authority::{Self, OwnerCap, AdminCap, ServerAddressRegistry},
     character::Character,
     in_game_id::{Self, TenantItemId},
     inventory::{Self, Inventory, Item},
@@ -82,21 +81,21 @@ public fun authorize_extension<Auth: drop>(
     storage_unit: &mut StorageUnit,
     owner_cap: &OwnerCap<StorageUnit>,
 ) {
-    assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
+    assert!(access::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
     storage_unit.extension.swap_or_fill(type_name::with_defining_ids<Auth>());
 }
 
-// We can do wrappers like this, or directly call respective modules
 public fun online(storage_unit: &mut StorageUnit, owner_cap: &OwnerCap<StorageUnit>) {
-    assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
+    assert!(access::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
     storage_unit.status.online();
 }
 
 public fun offline(storage_unit: &mut StorageUnit, owner_cap: &OwnerCap<StorageUnit>) {
-    assert!(authority::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
+    assert!(access::is_authorized(owner_cap, object::id(storage_unit)), EAssemblyNotAuthorized);
     storage_unit.status.offline();
 }
 
+/// Bridges items from chain to game inventory
 public fun chain_item_to_game_inventory<T: key>(
     storage_unit: &mut StorageUnit,
     server_registry: &ServerAddressRegistry,
@@ -271,12 +270,16 @@ public fun anchor(
     );
 
     let registry_id = assembly::borrow_registry_id(assembly_registry);
-    let assembly_uid = derived_object::claim(registry_id, item_id);
+    let assembly_uid = derived_object::claim(registry_id, storage_unit_key);
     let assembly_id = object::uid_to_inner(&assembly_uid);
 
-    // Create owner cap first with just the ID
-    let owner_cap = authority::create_owner_cap_by_id<StorageUnit>(admin_cap, assembly_id, ctx);
-    let owner_cap_id = object::id(&owner_cap);
+    // Create owner cap
+    let owner_cap_id = access::create_and_transfer_owner_cap<StorageUnit>(
+        admin_cap,
+        assembly_id,
+        character.character_address(),
+        ctx,
+    );
 
     let mut storage_unit = StorageUnit {
         id: assembly_uid,
@@ -297,9 +300,6 @@ public fun anchor(
         ),
         extension: option::none(),
     };
-
-    // Create ownerCap for storage unit
-    authority::transfer_owner_cap(owner_cap, character.character_address(), ctx);
 
     let inventory = inventory::create(
         assembly_id,
@@ -347,6 +347,7 @@ public fun unanchor(storage_unit: StorageUnit, _: &AdminCap) {
     id.delete();
 }
 
+/// Bridges items from game to chain inventory
 public fun game_item_to_chain_inventory<T: key>(
     storage_unit: &mut StorageUnit,
     _: &AdminCap,
@@ -405,9 +406,9 @@ fun check_inventory_authorization<T: key>(
     let storage_unit_id = object::id(storage_unit);
 
     if (owner_cap_type == type_name::with_defining_ids<StorageUnit>()) {
-        assert!(authority::is_authorized(owner_cap, storage_unit_id), EInventoryNotAuthorized);
+        assert!(access::is_authorized(owner_cap, storage_unit_id), EInventoryNotAuthorized);
     } else if (owner_cap_type == type_name::with_defining_ids<Character>()) {
-        assert!(authority::is_authorized(owner_cap, character_id), EInventoryNotAuthorized);
+        assert!(access::is_authorized(owner_cap, character_id), EInventoryNotAuthorized);
     } else {
         assert!(false, EInventoryNotAuthorized);
     };

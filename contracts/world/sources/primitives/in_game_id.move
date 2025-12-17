@@ -5,6 +5,9 @@ use std::string::String;
 
 // === Structs ===
 /// Represents a unique in-game identifier used to deterministically derive on-chain object IDs.
+/// # Argument
+/// * `item_id`- The unique in-game item identifier
+/// * `tenant` - Different game server instances e.g. production/development/testing”
 public struct TenantItemId has copy, drop, store {
     item_id: u64,
     tenant: String,
