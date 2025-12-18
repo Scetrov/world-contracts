@@ -23,7 +23,7 @@ module world::storage_unit;
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, derived_object, dynamic_field as df, event};
 use world::{
-    access::{Self, OwnerCap, AdminCap, ServerAddressRegistry},
+    access::{Self, OwnerCap, AdminCap, ServerAddressRegistry, AdminACL},
     assembly::{Self, AssemblyRegistry},
     character::Character,
     in_game_id::{Self, TenantItemId},
@@ -51,6 +51,10 @@ const EInventoryNotAuthorized: vector<u8> = b"Inventory Access not authorized";
 const ENotOnline: vector<u8> = b"Storage Unit is not online";
 #[error(code = 7)]
 const ETenantMismatch: vector<u8> = b"Item cannot be transferred across tenants";
+#[error(code = 8)]
+const EUnauthorizedSponsor: vector<u8> = b"Unauthorized sponsor";
+#[error(code = 9)]
+const ETransactionNotSponsored: vector<u8> = b"Transaction not sponsored";
 
 // Future thought: Can we make the behaviour attached dynamically using dof
 // === Structs ===
@@ -350,7 +354,7 @@ public fun unanchor(storage_unit: StorageUnit, _: &AdminCap) {
 /// Bridges items from game to chain inventory
 public fun game_item_to_chain_inventory<T: key>(
     storage_unit: &mut StorageUnit,
-    _: &AdminCap,
+    admin_acl: &AdminACL,
     owner_cap: &OwnerCap<T>,
     character_id: ID,
     item_id: u64,
@@ -359,6 +363,11 @@ public fun game_item_to_chain_inventory<T: key>(
     quantity: u32,
     ctx: &mut TxContext,
 ) {
+    let sponsor_opt = tx_context::sponsor(ctx);
+    assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
+    let sponsor = *option::borrow(&sponsor_opt);
+    assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
+
     let owner_cap_id = object::id(owner_cap);
     assert!(storage_unit.status.is_online(), ENotOnline);
     check_inventory_authorization(owner_cap, storage_unit, character_id);
@@ -471,4 +480,53 @@ public fun chain_item_to_game_inventory_test<T: key>(
         quantity,
         ctx,
     );
+}
+
+#[test_only]
+public fun game_item_to_chain_inventory_test<T: key>(
+    storage_unit: &mut StorageUnit,
+    admin_acl: &AdminACL,
+    owner_cap: &OwnerCap<T>,
+    character_id: ID,
+    item_id: u64,
+    type_id: u64,
+    volume: u64,
+    quantity: u32,
+    ctx: &mut TxContext,
+) {
+    assert!(admin_acl.is_authorized_sponsor(ctx.sender()), EUnauthorizedSponsor);
+
+    let owner_cap_id = object::id(owner_cap);
+    assert!(storage_unit.status.is_online(), ENotOnline);
+    check_inventory_authorization(owner_cap, storage_unit, character_id);
+
+    // create a ephemeral inventory if it does not exists for a character
+    if (!df::exists_(&storage_unit.id, owner_cap_id)) {
+        let owner_inv = df::borrow<ID, Inventory>(
+            &storage_unit.id,
+            storage_unit.owner_cap_id,
+        );
+        let inventory = inventory::create(
+            object::id(storage_unit),
+            owner_cap_id,
+            owner_inv.max_capacity(),
+        );
+
+        storage_unit.inventory_keys.push_back(owner_cap_id);
+        df::add(&mut storage_unit.id, owner_cap_id, inventory);
+    };
+
+    let inventory = df::borrow_mut<ID, Inventory>(
+        &mut storage_unit.id,
+        owner_cap_id,
+    );
+    inventory.mint_items(
+        storage_unit.key.tenant(),
+        item_id,
+        type_id,
+        volume,
+        quantity,
+        storage_unit.location.hash(),
+        ctx,
+    )
 }
