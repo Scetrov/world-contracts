@@ -19,7 +19,6 @@ const LOCATION_HASH: vector<u8> =
     x"7a8f3b2e9c4d1a6f5e8b2d9c3f7a1e5b7a8f3b2e9c4d1a6f5e8b2d9c3f7a1e5b";
 const TYPE_ID: u64 = 8888;
 const ITEM_ID: u64 = 1001;
-const VOLUME: u64 = 1000;
 const STATUS_ONLINE: u8 = 1;
 const STATUS_OFFLINE: u8 = 2;
 
@@ -84,7 +83,6 @@ fun create_network_node(ts: &mut ts::Scenario): ID {
         &admin_cap,
         NWN_ITEM_ID,
         NWN_TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         FUEL_MAX_CAPACITY,
         FUEL_BURN_RATE_IN_MS,
@@ -121,7 +119,6 @@ fun create_assembly_with_character(ts: &mut ts::Scenario, nwn_id: ID, character_
         &admin_cap,
         ITEM_ID,
         TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
@@ -278,7 +275,6 @@ fun test_unanchor() {
         &admin_cap,
         ITEM_ID,
         TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
@@ -324,7 +320,6 @@ fun test_anchor_duplicate_item_id() {
         &admin_cap,
         ITEM_ID,
         TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
@@ -338,7 +333,6 @@ fun test_anchor_duplicate_item_id() {
         &admin_cap,
         ITEM_ID,
         TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
@@ -374,7 +368,6 @@ fun test_anchor_invalid_type_id() {
         &admin_cap,
         ITEM_ID,
         0, // Invalid Type ID
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
@@ -410,7 +403,6 @@ fun test_anchor_invalid_item_id() {
         &admin_cap,
         0, // Invalid Item ID
         TYPE_ID,
-        VOLUME,
         LOCATION_HASH,
         ts.ctx(),
     );
