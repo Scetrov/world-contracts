@@ -6,11 +6,12 @@ use std::{string::utf8, unit_test::assert_eq};
 use sui::{clock, test_scenario as ts};
 use world::{
     access::{AdminCap, OwnerCap, AdminACL},
-    assembly::{Self, Assembly, AssemblyRegistry},
-    character::{Self, Character, CharacterRegistry},
+    assembly::{Self, Assembly},
+    character::{Self, Character},
     energy::EnergyConfig,
     fuel::{Self, FuelConfig},
-    network_node::{Self, NetworkNodeRegistry, NetworkNode},
+    network_node::{Self, NetworkNode},
+    object_registry::ObjectRegistry,
     test_helpers::{Self, governor, admin, in_game_id, tenant, user_a, user_b}
 };
 
@@ -35,6 +36,7 @@ const TYPE_ID: u64 = 8888;
 const ITEM_ID_1: u64 = 1001;
 const ITEM_ID_2: u64 = 1002;
 const ASSEMBLY_ENERGY_REQUIRED: u64 = 50; // Energy required for TYPE_ID 8888
+const CHARACTER_ITEM_ID_OFFSET: u32 = 10000;
 
 // Helper Functions
 fun setup(ts: &mut ts::Scenario) {
@@ -48,7 +50,7 @@ fun create_character(ts: &mut ts::Scenario, user: address, item_id: u32): ID {
     {
         let character_id = {
             let admin_cap = ts::take_from_sender<AdminCap>(ts);
-            let mut registry = ts::take_shared<CharacterRegistry>(ts);
+            let mut registry = ts::take_shared<ObjectRegistry>(ts);
             let character = character::create_character(
                 &mut registry,
                 &admin_cap,
@@ -76,12 +78,12 @@ fun create_network_node(
     character_id: ID,
 ): ID {
     ts::next_tx(ts, admin());
-    let mut nwn_registry = ts::take_shared<NetworkNodeRegistry>(ts);
+    let mut registry = ts::take_shared<ObjectRegistry>(ts);
     let character = ts::take_shared_by_id<Character>(ts, character_id);
     let admin_cap = ts::take_from_sender<AdminCap>(ts);
 
     let nwn = network_node::anchor(
-        &mut nwn_registry,
+        &mut registry,
         &character,
         &admin_cap,
         item_id,
@@ -97,19 +99,20 @@ fun create_network_node(
 
     ts::return_shared(character);
     ts::return_to_sender(ts, admin_cap);
-    ts::return_shared(nwn_registry);
+    ts::return_shared(registry);
     id
 }
 
 fun create_assembly(ts: &mut ts::Scenario, nwn_id: ID, item_id: u64): ID {
-    let character_id = create_character(ts, user_a(), (item_id as u32));
+    let character_item_id = (item_id as u32) + CHARACTER_ITEM_ID_OFFSET;
+    let character_id = create_character(ts, user_a(), character_item_id);
     ts::next_tx(ts, admin());
-    let mut assembly_registry = ts::take_shared<AssemblyRegistry>(ts);
+    let mut registry = ts::take_shared<ObjectRegistry>(ts);
     let mut nwn = ts::take_shared_by_id<NetworkNode>(ts, nwn_id);
     let character = ts::take_shared_by_id<Character>(ts, character_id);
     let admin_cap = ts::take_from_sender<AdminCap>(ts);
     let assembly = assembly::anchor(
-        &mut assembly_registry,
+        &mut registry,
         &mut nwn,
         &character,
         &admin_cap,
@@ -123,7 +126,7 @@ fun create_assembly(ts: &mut ts::Scenario, nwn_id: ID, item_id: u64): ID {
     assembly::share_assembly(assembly, &admin_cap);
 
     ts::return_to_sender(ts, admin_cap);
-    ts::return_shared(assembly_registry);
+    ts::return_shared(registry);
     ts::return_shared(nwn);
     id
 }
@@ -219,9 +222,9 @@ fun anchor_network_node() {
 
     ts::next_tx(&mut ts, admin());
     {
-        let nwn_registry = ts::take_shared<NetworkNodeRegistry>(&ts);
-        assert!(network_node::nwn_exists(&nwn_registry, in_game_id(NWN_ITEM_ID)), 0);
-        ts::return_shared(nwn_registry);
+        let registry = ts::take_shared<ObjectRegistry>(&ts);
+        assert!(registry.object_exists(in_game_id(NWN_ITEM_ID)), 0);
+        ts::return_shared(registry);
     };
 
     ts::next_tx(&mut ts, admin());
@@ -709,11 +712,11 @@ fun anchor_invalid_type_id() {
 
     ts::next_tx(&mut ts, admin());
     {
-        let mut nwn_registry = ts::take_shared<NetworkNodeRegistry>(&ts);
+        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
         let character = ts::take_shared_by_id<Character>(&ts, character_id);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
         let nwn = network_node::anchor(
-            &mut nwn_registry,
+            &mut registry,
             &character,
             &admin_cap,
             NWN_ITEM_ID,
@@ -728,7 +731,7 @@ fun anchor_invalid_type_id() {
         nwn.share_network_node(&admin_cap);
 
         ts::return_to_sender(&ts, admin_cap);
-        ts::return_shared(nwn_registry);
+        ts::return_shared(registry);
     };
     ts::end(ts);
 }
@@ -743,11 +746,11 @@ fun anchor_invalid_item_id() {
 
     ts::next_tx(&mut ts, admin());
     {
-        let mut nwn_registry = ts::take_shared<NetworkNodeRegistry>(&ts);
+        let mut registry = ts::take_shared<ObjectRegistry>(&ts);
         let character = ts::take_shared_by_id<Character>(&ts, character_id);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
         let nwn = network_node::anchor(
-            &mut nwn_registry,
+            &mut registry,
             &character,
             &admin_cap,
             0, // Invalid Item ID
@@ -762,7 +765,7 @@ fun anchor_invalid_item_id() {
         nwn.share_network_node(&admin_cap);
 
         ts::return_to_sender(&ts, admin_cap);
-        ts::return_shared(nwn_registry);
+        ts::return_shared(registry);
     };
     ts::end(ts);
 }
