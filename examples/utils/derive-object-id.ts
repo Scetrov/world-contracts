@@ -1,10 +1,10 @@
 import { bcs } from "@mysten/sui/bcs";
 import { deriveObjectID } from "@mysten/sui/utils";
+import { TENANT } from "./constants";
 
-export function deriveCharacterId(
+export function deriveObjectId(
     registryId: string,
-    gameCharacterId: number | bigint,
-    tenant: string,
+    itemId: number | bigint,
     packageId: string
 ): string {
     const TenantItemId = bcs.struct("TenantItemId", {
@@ -13,8 +13,8 @@ export function deriveCharacterId(
     });
 
     const TenantItemIdValue = {
-        id: BigInt(gameCharacterId),
-        tenant: tenant,
+        id: BigInt(itemId),
+        tenant: TENANT,
     };
     const serializedKey = TenantItemId.serialize(TenantItemIdValue).toBytes();
     const TenantItemIdTypeTag = `${packageId}::in_game_id::TenantItemId`;

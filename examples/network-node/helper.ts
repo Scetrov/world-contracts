@@ -2,8 +2,12 @@ import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
 import { SuiClient } from "@mysten/sui/client";
 import { getConfig, MODULES, Network } from "../utils/config";
-import { createClient } from "../utils/client";
 import { bcs } from "@mysten/sui/bcs";
+
+export interface AssemblyTypeInfo {
+    id: string;
+    isStorageUnit: boolean;
+}
 
 export async function getFuelQuantity(
     networkNodeId: string,
@@ -130,4 +134,70 @@ export async function isNetworkNodeOnline(
         );
         return null;
     }
+}
+
+export async function getOwnerCap(
+    networkNodeId: string,
+    client: SuiClient,
+    config: ReturnType<typeof getConfig>,
+    senderAddress?: string
+): Promise<string | null> {
+    try {
+        const tx = new Transaction();
+
+        tx.moveCall({
+            target: `${config.packageId}::${MODULES.NETWORK_NODE}::owner_cap_id`,
+            arguments: [tx.object(networkNodeId)],
+        });
+
+        const result = await client.devInspectTransactionBlock({
+            sender: senderAddress || process.env.ADMIN_ADDRESS || "0x",
+            transactionBlock: tx,
+        });
+
+        if (result.effects?.status?.status !== "success") {
+            console.warn("Error checking ownercap id:", result.effects?.status?.error);
+            return null;
+        }
+        const returnValues = result.results?.[0]?.returnValues;
+
+        if (returnValues && returnValues.length > 0) {
+            const [valueBytes] = returnValues[0];
+            const ownerCapId = bcs.Address.parse(Uint8Array.from(valueBytes));
+            return ownerCapId;
+        }
+
+        return null;
+    } catch (error) {
+        console.warn("Failed to get ownerCap:", error instanceof Error ? error.message : error);
+        return null;
+    }
+}
+
+export async function getAssemblyTypes(
+    assemblyIds: string[],
+    client: SuiClient
+): Promise<AssemblyTypeInfo[]> {
+    return await Promise.all(
+        assemblyIds.map(async (assemblyId) => {
+            try {
+                const object = await client.getObject({
+                    id: assemblyId,
+                    options: { showType: true },
+                });
+                const type = object.data?.type;
+                return {
+                    id: assemblyId,
+                    isStorageUnit: type?.includes("StorageUnit") ?? false,
+                };
+            } catch (error) {
+                console.warn(`Failed to get type for assembly ${assemblyId}:`, error);
+                // Default to assembly module if we can't determine the type
+                return {
+                    id: assemblyId,
+                    isStorageUnit: false,
+                };
+            }
+        })
+    );
 }

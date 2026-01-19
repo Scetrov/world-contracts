@@ -2,13 +2,16 @@ import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
 import { SuiClient } from "@mysten/sui/client";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { getConfig, MODULES, Network } from "../utils/config";
-import { createClient, keypairFromPrivateKey } from "../utils/client";
-import { getFuelQuantity, getConnectedAssemblies, isNetworkNodeOnline } from "./helper";
-
-const CLOCK_OBJECT_ID = "0x6";
-
-const NETWORK_NODE_OBJECT_ID = "0x24e93560b47cd5e8fa8ea532859bc415fa7426f9b5267c8623dacec67d56e175";
+import { getConfig, MODULES } from "../utils/config";
+import {
+    getFuelQuantity,
+    getConnectedAssemblies,
+    isNetworkNodeOnline,
+    getAssemblyTypes,
+} from "./helper";
+import { deriveObjectId } from "../utils/derive-object-id";
+import { CLOCK_OBJECT_ID, NWN_ITEM_ID } from "../utils/constants";
+import { initializeContext, handleError, getEnvConfig } from "../utils/helper";
 
 /**
  * Updates fuel for a network node and handles fuel depletion if it occurs.
@@ -46,6 +49,9 @@ async function updateFuel(
     const assemblyIds = (await getConnectedAssemblies(networkNodeId, client, config)) || [];
     console.log(`Found ${assemblyIds.length} connected assemblies`);
 
+    // Determine which assemblies are storage units by querying their types
+    const assemblyTypes = await getAssemblyTypes(assemblyIds, client);
+
     const tx = new Transaction();
 
     // Step 1: Call update_fuel which returns OfflineAssemblies
@@ -55,7 +61,7 @@ async function updateFuel(
         arguments: [
             tx.object(networkNodeId),
             tx.object(config.fuelConfig),
-            tx.object(config.adminCapObjectId),
+            tx.object(config.adminCap),
             tx.object(CLOCK_OBJECT_ID),
         ],
     });
@@ -63,9 +69,15 @@ async function updateFuel(
     // Step 2: Process each assembly from the hot potato
     // The hot potato contains the assembly IDs connected to the network node
     let currentHotPotato = offlineAssemblies;
-    for (const assemblyId of assemblyIds) {
+    for (const { id: assemblyId, isStorageUnit } of assemblyTypes) {
+        // Call the appropriate function based on assembly type
+        const module = isStorageUnit ? MODULES.STORAGE_UNIT : MODULES.ASSEMBLY;
+        const functionName = isStorageUnit
+            ? "offline_connected_storage_unit"
+            : "offline_connected_assembly";
+
         const [updatedHotPotato] = tx.moveCall({
-            target: `${config.packageId}::${MODULES.ASSEMBLY}::offline_connected_assembly`,
+            target: `${config.packageId}::${module}::${functionName}`,
             arguments: [
                 tx.object(assemblyId),
                 currentHotPotato,
@@ -97,34 +109,20 @@ async function updateFuel(
 }
 
 async function main() {
-    console.log("============= Update Network Node Fuel example ==============\n");
-
     try {
-        const network = (process.env.SUI_NETWORK as Network) || "localnet";
-        const exportedKey = process.env.PRIVATE_KEY;
+        const env = getEnvConfig();
+        const ctx = initializeContext(env.network, env.exportedKey);
+        const { client, keypair, config } = ctx;
 
-        if (!exportedKey) {
-            throw new Error(
-                "PRIVATE_KEY environment variable is required eg: PRIVATE_KEY=suiprivkey1..."
-            );
-        }
+        let networkNodeObject = deriveObjectId(
+            config.objectRegistry,
+            NWN_ITEM_ID,
+            config.packageId
+        );
 
-        const client = createClient(network);
-        const keypair = keypairFromPrivateKey(exportedKey);
-        const config = getConfig(network);
-        const adminAddress = keypair.getPublicKey().toSuiAddress();
-
-        console.log("Network:", network);
-        console.log("Admin address:", adminAddress);
-
-        await updateFuel(NETWORK_NODE_OBJECT_ID, client, keypair, config);
+        await updateFuel(networkNodeObject, client, keypair, config);
     } catch (error) {
-        console.error("\n=== Error ===");
-        console.error("Error:", error instanceof Error ? error.message : error);
-        if (error instanceof Error && error.stack) {
-            console.error("Stack:", error.stack);
-        }
-        process.exit(1);
+        handleError(error);
     }
 }
 

@@ -1,16 +1,16 @@
 import "dotenv/config";
+import { bcs } from "@mysten/sui/bcs";
 import { Transaction } from "@mysten/sui/transactions";
 import { SuiClient } from "@mysten/sui/client";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { getConfig, MODULES, Network } from "../utils/config";
-import { createClient, keypairFromPrivateKey } from "../utils/client";
-
-const ASSEMBLY_ID = "0xf8be2f792c0940b318b63e12a221e201fef08f0ec6186177aded0c539851236d";
-const OWNER_CAP_ID = "0xaaf1e3b6701c80a4a95b96765e9a2b3181a6f7bb83678198e6abac808d56a6db";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { getConfig, MODULES } from "../utils/config";
+import { deriveObjectId } from "../utils/derive-object-id";
+import { NWN_ITEM_ID, STORAGE_A_ITEM_ID } from "../utils/constants";
+import { initializeContext, handleError, getEnvConfig } from "../utils/helper";
+import { getOwnerCap } from "./helper";
 
 export async function online(
+    networkObjectId: string,
     assemblyId: string,
     ownerCapId: string,
     client: SuiClient,
@@ -22,7 +22,12 @@ export async function online(
 
     tx.moveCall({
         target: `${config.packageId}::${MODULES.STORAGE_UNIT}::online`,
-        arguments: [tx.object(assemblyId), tx.object(ownerCapId)],
+        arguments: [
+            tx.object(assemblyId),
+            tx.object(networkObjectId),
+            tx.object(config.energyConfig),
+            tx.object(ownerCapId),
+        ],
     });
 
     const result = await client.signAndExecuteTransaction({
@@ -37,35 +42,31 @@ export async function online(
 }
 
 async function main() {
-    console.log("============= online assembly example ==============\n");
-
     try {
-        const network = (process.env.SUI_NETWORK as Network) || "localnet";
-        const exportedKey = process.env.PLAYER_A_PRIVATE_KEY || process.env.PRIVATE_KEY;
+        const env = getEnvConfig();
+        const playerCtx = initializeContext(env.network, env.playerExportedKey!);
+        const { client, keypair, config } = playerCtx;
 
-        if (!exportedKey) {
-            throw new Error(
-                "PLAYER_A_PRIVATE_KEY environment variable is required eg: PRIVATE_KEY=suiprivkey1..."
-            );
+        let networkNodeObject = deriveObjectId(
+            config.objectRegistry,
+            NWN_ITEM_ID,
+            config.packageId
+        );
+
+        let assemblyObject = deriveObjectId(
+            config.objectRegistry,
+            STORAGE_A_ITEM_ID,
+            config.packageId
+        );
+
+        let assemblyOwnerCap = await getOwnerCap(assemblyObject, client, config, playerCtx.address);
+        if (!assemblyOwnerCap) {
+            throw new Error(`OwnerCap not found for ${assemblyObject}`);
         }
 
-        const client = createClient(network);
-        const keypair = keypairFromPrivateKey(exportedKey);
-        const config = getConfig(network);
-
-        const playerAddress = keypair.getPublicKey().toSuiAddress();
-
-        console.log("Network:", network);
-        console.log("Player address:", playerAddress);
-
-        await online(ASSEMBLY_ID, OWNER_CAP_ID, client, keypair, config);
+        await online(networkNodeObject, assemblyObject, assemblyOwnerCap, client, keypair, config);
     } catch (error) {
-        console.error("\n=== Error ===");
-        console.error("Error:", error instanceof Error ? error.message : error);
-        if (error instanceof Error && error.stack) {
-            console.error("Stack:", error.stack);
-        }
-        process.exit(1);
+        handleError(error);
     }
 }
 

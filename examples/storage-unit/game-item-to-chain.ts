@@ -1,17 +1,17 @@
 import "dotenv/config";
 import { Transaction } from "@mysten/sui/transactions";
-import { bcs } from "@mysten/sui/bcs";
 import { SuiClient } from "@mysten/sui/client";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { getConfig, MODULES, Network } from "../utils/config";
-import { createClient, keypairFromPrivateKey } from "../utils/client";
-
-const CHARACTER_OBJECT_ID = "0xce85fa882b9457458462aef487afc1ef045729e533aa78ded7f0d585b0cef659";
-const STORAGE_UNIT = "0xf8be2f792c0940b318b63e12a221e201fef08f0ec6186177aded0c539851236d";
-const STORAGE_OWNER_CAP = "0xaaf1e3b6701c80a4a95b96765e9a2b3181a6f7bb83678198e6abac808d56a6db";
-
-const ITEM_A_TYPE_ID = BigInt(Math.floor(Math.random() * 1000) + 5);
-const CORPSE_ITEM_ID = BigInt(Math.floor(Math.random() * 777000) + 8);
+import { getConfig, MODULES } from "../utils/config";
+import { deriveObjectId } from "../utils/derive-object-id";
+import { initializeContext, handleError, getEnvConfig } from "../utils/helper";
+import {
+    GAME_CHARACTER_ID,
+    STORAGE_A_ITEM_ID,
+    ITEM_A_TYPE_ID,
+    ITEM_A_ITEM_ID,
+} from "../utils/constants";
+import { getOwnerCap } from "./helper";
 
 async function gameItemToChain(
     storageUnit: string,
@@ -39,7 +39,7 @@ async function gameItemToChain(
         typeArguments: [`${config.packageId}::${MODULES.STORAGE_UNIT}::StorageUnit`],
         arguments: [
             tx.object(storageUnit),
-            tx.object(config.adminAclObjectId),
+            tx.object(config.adminAcl),
             tx.object(owner_cap_objectId),
             tx.object(characterId),
             tx.pure.u64(itemId),
@@ -84,69 +84,53 @@ async function gameItemToChain(
 
     console.log(result);
 
-    const mintEvent = result.events?.find((event) =>
-        event.type.endsWith("::inventory::ItemMintedEvent")
-    );
-
-    if (!mintEvent) {
-        throw new Error("ItemMintedEvent not found in transaction result");
-    }
-
-    const eventData = mintEvent.parsedJson as { item_uid: string };
-    const itemObjectId = eventData.item_uid;
-
-    if (!itemObjectId) {
-        throw new Error("Failed to get item UID from ItemMintedEvent");
-    }
-
-    console.log("itemObjectId objectId:", itemObjectId);
+    console.log("Item Id:", itemId);
 }
 
 async function main() {
-    console.log("============= Create Storage Unit example ==============\n");
-
     try {
-        const network = (process.env.SUI_NETWORK as Network) || "localnet";
-        const exportedKey = process.env.PRIVATE_KEY;
-        const playerExportedKey = process.env.PLAYER_A_PRIVATE_KEY || exportedKey;
-        const tenant = process.env.TENANT || "";
+        const env = getEnvConfig();
+        const ctx = initializeContext(env.network, env.exportedKey);
+        const playerCtx = initializeContext(env.network, env.playerExportedKey!);
+        const { client, keypair, config } = ctx;
 
-        if (!exportedKey || !playerExportedKey) {
-            throw new Error(
-                "PRIVATE_KEY environment variable is required eg: PRIVATE_KEY=suiprivkey1..."
-            );
-        }
-
-        const client = createClient(network);
-        const keypair = keypairFromPrivateKey(exportedKey);
-        const playerKeypair = keypairFromPrivateKey(playerExportedKey);
-        const config = getConfig(network);
-
-        const playerAddress = playerKeypair.getPublicKey().toSuiAddress();
+        const playerAddress = playerCtx.address;
         const adminAddress = keypair.getPublicKey().toSuiAddress();
 
+        let characterObject = deriveObjectId(
+            config.objectRegistry,
+            GAME_CHARACTER_ID,
+            config.packageId
+        );
+
+        let storageUnit = deriveObjectId(
+            config.objectRegistry,
+            STORAGE_A_ITEM_ID,
+            config.packageId
+        );
+
+        let storageUnitOwnerCap = await getOwnerCap(storageUnit, client, config, playerAddress);
+        if (!storageUnitOwnerCap) {
+            throw new Error(`OwnerCap not found for ${storageUnit}`);
+        }
+
         await gameItemToChain(
-            STORAGE_UNIT,
-            CHARACTER_OBJECT_ID,
-            STORAGE_OWNER_CAP,
+            storageUnit,
+            characterObject,
+            storageUnitOwnerCap,
             playerAddress,
             ITEM_A_TYPE_ID,
-            CORPSE_ITEM_ID,
+            ITEM_A_ITEM_ID,
             10n,
             10,
             adminAddress,
             client,
-            playerKeypair,
+            playerCtx.keypair,
             keypair,
             config
         );
     } catch (error) {
-        console.error("\n=== Error ===");
-        console.error("Error:", error instanceof Error ? error.message : error);
-        if (error instanceof Error && error.stack) {
-            console.error("Stack:", error.stack);
-        }
-        process.exit(1);
+        handleError(error);
     }
 }
 
