@@ -84,12 +84,14 @@ public fun deposit_fuel(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    let nwn_id = object::id(nwn);
+    let nwn_key = nwn.key;
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     let sponsor_opt = tx_context::sponsor(ctx);
     assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
     let sponsor = *option::borrow(&sponsor_opt);
     assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
-    nwn.fuel.deposit(type_id, volume, quantity, clock);
+    nwn.fuel.deposit(nwn_id, nwn_key, type_id, volume, quantity, clock);
 }
 
 public fun withdraw_fuel(
@@ -99,19 +101,22 @@ public fun withdraw_fuel(
     quantity: u64,
     ctx: &mut TxContext,
 ) {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    let nwn_id = object::id(nwn);
+    let nwn_key = nwn.key;
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     let sponsor_opt = tx_context::sponsor(ctx);
     assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
     let sponsor = *option::borrow(&sponsor_opt);
     assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
-    nwn.fuel.withdraw(quantity);
+    nwn.fuel.withdraw(nwn_id, nwn_key, quantity);
 }
 
 public fun online(nwn: &mut NetworkNode, owner_cap: &OwnerCap<NetworkNode>, clock: &Clock) {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
-    nwn.fuel.start_burning(clock);
-    nwn.energy_source.start_energy_production();
-    nwn.status.online();
+    let nwn_id = object::id(nwn);
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
+    nwn.fuel.start_burning(nwn_id, nwn.key, clock);
+    nwn.energy_source.start_energy_production(nwn_id);
+    nwn.status.online(nwn_id, nwn.key);
 }
 
 /// Takes the network node offline and returns a hot potato that must be consumed
@@ -122,21 +127,22 @@ public fun offline(
     owner_cap: &OwnerCap<NetworkNode>,
     clock: &Clock,
 ): OfflineAssemblies {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    let nwn_id = object::id(nwn);
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     assert!(nwn.status.is_online(), ENetworkNodeOffline);
 
     // Update fuel first to consume any pending fuel
-    nwn.fuel.update(fuel_config, clock);
+    nwn.fuel.update(nwn_id, nwn.key, fuel_config, clock);
 
     if (nwn.fuel.is_burning()) {
-        nwn.fuel.stop_burning(fuel_config, clock);
+        nwn.fuel.stop_burning(nwn_id, nwn.key, fuel_config, clock);
     };
 
     if (nwn.energy_source.current_energy_production() > 0) {
-        nwn.energy_source.stop_energy_production();
+        nwn.energy_source.stop_energy_production(nwn_id);
     };
 
-    nwn.status.offline();
+    nwn.status.offline(nwn_id, nwn.key);
 
     OfflineAssemblies {
         assembly_ids: copy_connected_assembly_ids(nwn),
@@ -219,14 +225,14 @@ public fun anchor(
         key: nwn_key,
         owner_cap_id,
         type_id,
-        status: status::anchor(nwn_id, type_id, item_id),
-        location: location::attach(nwn_id, location_hash),
-        fuel: fuel::create(nwn_id, nwn_key, fuel_max_capacity, fuel_burn_rate_in_ms),
-        energy_source: energy::create(nwn_id, max_energy_production),
+        status: status::anchor(nwn_id, nwn_key),
+        location: location::attach(location_hash),
+        fuel: fuel::create(fuel_max_capacity, fuel_burn_rate_in_ms),
+        energy_source: energy::create(max_energy_production),
         metadata: std::option::some(
             metadata::create_metadata(
                 nwn_id,
-                item_id,
+                nwn_key,
                 b"".to_string(),
                 b"".to_string(),
                 b"".to_string(),
@@ -268,8 +274,9 @@ public fun connect_assemblies(nwn: &mut NetworkNode, _: &AdminCap, assembly_ids:
 /// which brings the assembly offline and releases energy
 /// After all assemblies are processed, call destroy_network_node to destroy the network node
 public fun unanchor(nwn: &mut NetworkNode, _: &AdminCap): OfflineAssemblies {
+    let nwn_id = object::id(nwn);
     if (nwn.energy_source.current_energy_production() > 0) {
-        nwn.energy_source.stop_energy_production();
+        nwn.energy_source.stop_energy_production(nwn_id);
     };
 
     OfflineAssemblies {
@@ -284,6 +291,7 @@ public fun destroy_network_node(
     offline_assemblies: OfflineAssemblies,
     _: &AdminCap,
 ) {
+    let nwn_id = object::id(&nwn);
     offline_assemblies.destroy_offline_assemblies();
     // Clean up connected assembliesd
     let assembly_ids = copy_connected_assembly_ids(&nwn);
@@ -293,6 +301,7 @@ public fun destroy_network_node(
 
     let NetworkNode {
         id,
+        key,
         status,
         location,
         fuel,
@@ -309,7 +318,7 @@ public fun destroy_network_node(
 
     // Clean up location, status, and metadata
     location.remove();
-    status.unanchor();
+    status.unanchor(nwn_id, key);
     metadata.do!(|metadata| metadata.delete());
 
     id.delete();
@@ -324,17 +333,19 @@ public fun update_fuel(
     _: &AdminCap,
     clock: &Clock,
 ): OfflineAssemblies {
+    let nwn_id = object::id(nwn);
+
     if (nwn.status.is_online()) {
         // Update fuel first
-        nwn.fuel.update(fuel_config, clock);
+        nwn.fuel.update(nwn_id, nwn.key, fuel_config, clock);
 
         if (!nwn.fuel.is_burning()) {
             // Fuel depleted - bring network node offline
             if (nwn.energy_source.current_energy_production() > 0) {
-                nwn.energy_source.stop_energy_production();
+                nwn.energy_source.stop_energy_production(nwn_id);
             };
 
-            nwn.status.offline();
+            nwn.status.offline(nwn_id, nwn.key);
 
             // Return hot potato with connected assembly IDs
             return OfflineAssemblies {
@@ -446,9 +457,10 @@ public fun deposit_fuel_test(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    let nwn_id = object::id(nwn);
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     assert!(admin_acl.is_authorized_sponsor(ctx.sender()), EUnauthorizedSponsor);
-    nwn.fuel.deposit(type_id, volume, quantity, clock);
+    nwn.fuel.deposit(nwn_id, nwn.key, type_id, volume, quantity, clock);
 }
 
 #[test_only]
@@ -459,7 +471,8 @@ public fun withdraw_fuel_test(
     quantity: u64,
     ctx: &mut TxContext,
 ) {
-    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    let nwn_id = object::id(nwn);
+    assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     assert!(admin_acl.is_authorized_sponsor(ctx.sender()), EUnauthorizedSponsor);
-    nwn.fuel.withdraw(quantity);
+    nwn.fuel.withdraw(nwn_id, nwn.key, quantity);
 }
