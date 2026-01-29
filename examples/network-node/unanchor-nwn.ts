@@ -3,34 +3,32 @@ import { Transaction } from "@mysten/sui/transactions";
 import { SuiClient } from "@mysten/sui/client";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { getConfig, MODULES } from "../utils/config";
-import { getConnectedAssemblies, getOwnerCap, getAssemblyTypes } from "./helper";
+import { getConnectedAssemblies, getAssemblyTypes } from "./helper";
 import { deriveObjectId } from "../utils/derive-object-id";
-import { CLOCK_OBJECT_ID, NWN_ITEM_ID } from "../utils/constants";
+import { NWN_ITEM_ID } from "../utils/constants";
 import { initializeContext, handleError, getEnvConfig } from "../utils/helper";
 
 /**
- * Takes the network node offline and handles connected assemblies.
+ * Unanchors (destroys) the network node and handles connected assemblies.
  *
  * Flow:
  * 1. Query connected assemblies from the network node
  * 2. Determine which assemblies are storage units by querying their types
- * 3. Call offline which returns OfflineAssemblies hot potato
+ * 3. Call unanchor which returns UnanchorAssemblies hot potato
  * 4. Process each assembly:
- *    - Call offline_connected_storage_unit for storage units
- *    - Call offline_connected_assembly for regular assemblies
- *    - Removes from hot potato and brings assembly offline, releases energy
- * 5. Destroy the hot potato (validates list is empty)
+ *    - Call unanchor_connected_storage_unit or unanchor_connected_assembly
+ *    - Brings assembly offline, releases energy, and clears its energy source (assembly can later be attached to another NWN)
+ * 5. Call destroy_network_node to consume the hot potato and destroy the NWN
  */
-async function offline(
+async function unanchor(
     networkNodeId: string,
-    ownerCapId: string,
+    adminCapId: string,
     client: SuiClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
 ) {
-    console.log("\n==== Taking Network Node Offline ====");
+    console.log("\n==== Unanchoring (Destroying) Network Node ====");
 
-    // Get connected assembly IDs
     const assemblyIds = (await getConnectedAssemblies(networkNodeId, client, config)) || [];
     console.log(`Found ${assemblyIds.length} connected assemblies`);
 
@@ -38,26 +36,18 @@ async function offline(
 
     const tx = new Transaction();
 
-    // Call offline - returns OfflineAssemblies hot potato
-    const [offlineAssemblies] = tx.moveCall({
-        target: `${config.packageId}::${MODULES.NETWORK_NODE}::offline`,
-        arguments: [
-            tx.object(networkNodeId),
-            tx.object(config.fuelConfig),
-            tx.object(ownerCapId),
-            tx.object(CLOCK_OBJECT_ID),
-        ],
+    // Call unanchor - returns UnanchorAssemblies hot potato (NWN is still alive until destroy_network_node)
+    const [unanchorAssemblies] = tx.moveCall({
+        target: `${config.packageId}::${MODULES.NETWORK_NODE}::unanchor`,
+        arguments: [tx.object(networkNodeId), tx.object(adminCapId)],
     });
 
-    // Process each assembly from the hot potato
-    // The hot potato contains the assembly IDs connected to the network node
-    let currentHotPotato = offlineAssemblies;
+    let currentHotPotato = unanchorAssemblies;
     for (const { id: assemblyId, isStorageUnit } of assemblyTypes) {
-        // Call the appropriate function based on assembly type
         const module = isStorageUnit ? MODULES.STORAGE_UNIT : MODULES.ASSEMBLY;
         const functionName = isStorageUnit
-            ? "offline_connected_storage_unit"
-            : "offline_connected_assembly";
+            ? "unanchor_connected_storage_unit"
+            : "unanchor_connected_assembly";
 
         const [updatedHotPotato] = tx.moveCall({
             target: `${config.packageId}::${module}::${functionName}`,
@@ -71,14 +61,11 @@ async function offline(
         currentHotPotato = updatedHotPotato;
     }
 
-    // Destroy the hot potato after all assemblies are processed
-    // This validates that the list is empty (all assemblies processed)
-    if (assemblyIds.length > 0) {
-        tx.moveCall({
-            target: `${config.packageId}::${MODULES.NETWORK_NODE}::destroy_offline_assemblies`,
-            arguments: [currentHotPotato],
-        });
-    }
+    // Destroy the network node (consumes hot potato and NWN)
+    tx.moveCall({
+        target: `${config.packageId}::${MODULES.NETWORK_NODE}::destroy_network_node`,
+        arguments: [tx.object(networkNodeId), currentHotPotato, tx.object(adminCapId)],
+    });
 
     const result = await client.signAndExecuteTransaction({
         transaction: tx,
@@ -97,22 +84,20 @@ async function main() {
         const ctx = initializeContext(env.network, env.playerExportedKey!);
         const { client, keypair, config } = ctx;
 
-        let networkNodeObject = deriveObjectId(
+        const adminCapId = config.adminCap;
+        if (!adminCapId) {
+            throw new Error(
+                "Admin cap not configured. Set adminCap in config for your network to run unanchor."
+            );
+        }
+
+        const networkNodeObject = deriveObjectId(
             config.objectRegistry,
             NWN_ITEM_ID,
             config.packageId
         );
-        let networkNodeOwnerCap = await getOwnerCap(
-            networkNodeObject,
-            client,
-            config,
-            env.playerAddress
-        );
-        if (!networkNodeOwnerCap) {
-            throw new Error(`OwnerCap not found for network node ${networkNodeObject}`);
-        }
 
-        await offline(networkNodeObject, networkNodeOwnerCap, client, keypair, config);
+        await unanchor(networkNodeObject, adminCapId, client, keypair, config);
     } catch (error) {
         handleError(error);
     }

@@ -10,7 +10,7 @@ use world::{
     in_game_id::{Self, TenantItemId},
     location::{Self, Location},
     metadata::{Self, Metadata},
-    network_node::{NetworkNode, OfflineAssemblies},
+    network_node::{NetworkNode, OfflineAssemblies, UnanchorAssemblies, UpdateEnergySources},
     object_registry::ObjectRegistry,
     status::{Self, AssemblyStatus}
 };
@@ -39,7 +39,7 @@ public struct Assembly has key {
     type_id: u64,
     status: AssemblyStatus,
     location: Location,
-    energy_source_id: ID,
+    energy_source_id: Option<ID>,
     metadata: Option<Metadata>,
 }
 
@@ -60,7 +60,11 @@ public fun online(
 ) {
     let assembly_id = object::id(assembly);
     assert!(access::is_authorized(owner_cap, assembly_id), EAssemblyNotAuthorized);
-    assert!(assembly.energy_source_id == object::id(network_node), ENetworkNodeDoesNotExist);
+    assert!(option::is_some(&assembly.energy_source_id), ENetworkNodeDoesNotExist);
+    assert!(
+        *option::borrow(&assembly.energy_source_id) == object::id(network_node),
+        ENetworkNodeDoesNotExist,
+    );
     reserve_energy(assembly, network_node, energy_config);
 
     assembly.status.online(assembly_id, assembly.key);
@@ -76,7 +80,11 @@ public fun offline(
     assert!(access::is_authorized(owner_cap, assembly_id), EAssemblyNotAuthorized);
 
     // Verify network node matches the assembly's energy source
-    assert!(assembly.energy_source_id == object::id(network_node), ENetworkNodeDoesNotExist);
+    assert!(option::is_some(&assembly.energy_source_id), ENetworkNodeDoesNotExist);
+    assert!(
+        *option::borrow(&assembly.energy_source_id) == object::id(network_node),
+        ENetworkNodeDoesNotExist,
+    );
     release_energy(assembly, network_node, energy_config);
 
     assembly.status.offline(assembly_id, assembly.key);
@@ -89,6 +97,11 @@ public fun status(assembly: &Assembly): &AssemblyStatus {
 
 public fun owner_cap_id(assembly: &Assembly): ID {
     assembly.owner_cap_id
+}
+
+/// Returns the assembly's energy source (network node) ID if set
+public fun energy_source_id(assembly: &Assembly): &Option<ID> {
+    &assembly.energy_source_id
 }
 
 // === Admin Functions ===
@@ -129,7 +142,7 @@ public fun anchor(
         type_id,
         status: status::anchor(assembly_id, assembly_key),
         location: location::attach(location_hash),
-        energy_source_id: network_node_id,
+        energy_source_id: option::some(network_node_id),
         metadata: std::option::some(
             metadata::create_metadata(
                 assembly_id,
@@ -168,14 +181,34 @@ public fun update_energy_source(
     assert!(!assembly.status.is_online(), EAssemblyOnline);
 
     network_node.connect_assembly(assembly_id);
-    assembly.energy_source_id = nwn_id;
+    assembly.energy_source_id = option::some(nwn_id);
+}
+
+/// Updates the assembly's energy source and removes it from the UpdateEnergySources hot potato.
+/// Must be called for each assembly in the hot potato returned by connect_assemblies.
+public fun update_energy_source_connected_assembly(
+    assembly: &mut Assembly,
+    mut update_energy_sources: UpdateEnergySources,
+    network_node: &NetworkNode,
+    _: &AdminCap,
+): UpdateEnergySources {
+    if (update_energy_sources.update_energy_sources_ids_length() > 0) {
+        let assembly_id = object::id(assembly);
+        let found = update_energy_sources.remove_update_energy_sources_assembly_id(
+            assembly_id,
+        );
+        if (found) {
+            assert!(!assembly.status.is_online(), EAssemblyOnline);
+            assembly.energy_source_id = option::some(object::id(network_node));
+        };
+    };
+    update_energy_sources
 }
 
 /// Brings a connected assembly offline and removes it from the hot potato
 /// Must be called for each assembly in the hot potato list
 /// Returns the updated hot potato with the processed assembly removed
 /// After all assemblies are processed, call destroy_offline_assemblies to consume the hot potato
-/// The hot potato itself serves as authorization since it can only be obtained from capped functions
 public fun offline_connected_assembly(
     assembly: &mut Assembly,
     mut offline_assemblies: OfflineAssemblies,
@@ -184,19 +217,32 @@ public fun offline_connected_assembly(
 ): OfflineAssemblies {
     if (offline_assemblies.ids_length() > 0) {
         let assembly_id = object::id(assembly);
-
-        // Remove the assembly ID from the hot potato using package function
         let found = offline_assemblies.remove_assembly_id(assembly_id);
-
         if (found) {
-            // Bring the assembly offline if it's online and release energy
-            if (assembly.status.is_online()) {
-                assembly.status.offline(assembly_id, assembly.key);
-                release_energy(assembly, network_node, energy_config);
-            };
+            bring_offline_and_release_energy(assembly, assembly_id, network_node, energy_config);
         }
     };
     offline_assemblies
+}
+
+/// Brings a connected assembly offline, releases energy, clears energy source, and removes it from the hot potato
+/// Must be called for each assembly in the hot potato returned by nwn.unanchor()
+/// Returns the updated UnanchorAssemblies; after all are processed, call destroy_network_node with it
+public fun unanchor_connected_assembly(
+    assembly: &mut Assembly,
+    mut unanchor_assemblies: UnanchorAssemblies,
+    network_node: &mut NetworkNode,
+    energy_config: &EnergyConfig,
+): UnanchorAssemblies {
+    if (unanchor_assemblies.unanchor_assemblies_length() > 0) {
+        let assembly_id = object::id(assembly);
+        let found = unanchor_assemblies.remove_unanchor_assembly_id(assembly_id);
+        if (found) {
+            bring_offline_and_release_energy(assembly, assembly_id, network_node, energy_config);
+            assembly.energy_source_id = option::none();
+        }
+    };
+    unanchor_assemblies
 }
 
 public fun unanchor(
@@ -216,7 +262,11 @@ public fun unanchor(
         ..,
     } = assembly;
 
-    assert!(energy_source_id == object::id(network_node), ENetworkNodeDoesNotExist);
+    assert!(option::is_some(&energy_source_id), ENetworkNodeDoesNotExist);
+    assert!(
+        *option::borrow(&energy_source_id) == object::id(network_node),
+        ENetworkNodeDoesNotExist,
+    );
 
     // Release energy if assembly is online
     if (status.is_online()) {
@@ -230,6 +280,7 @@ public fun unanchor(
     location.remove();
     status.unanchor(assembly_id, key);
     metadata.do!(|metadata| metadata.delete());
+    let _ = option::destroy_with_default(energy_source_id, object::id(network_node));
 
     // deleting doesnt mean the object id can be reclaimed.
     // however right now according to game design you cannot anchor after unanchor so its safe
@@ -239,6 +290,19 @@ public fun unanchor(
 }
 
 // === Private Functions ===
+/// Brings the assembly offline if online and releases energy to the network node
+fun bring_offline_and_release_energy(
+    assembly: &mut Assembly,
+    assembly_id: ID,
+    network_node: &mut NetworkNode,
+    energy_config: &EnergyConfig,
+) {
+    if (assembly.status.is_online()) {
+        assembly.status.offline(assembly_id, assembly.key);
+        release_energy(assembly, network_node, energy_config);
+    };
+}
+
 /// Reserves energy from the network node for the assembly
 fun reserve_energy(
     assembly: &Assembly,
