@@ -10,7 +10,7 @@ import {
     getAssemblyTypes,
 } from "./helper";
 import { deriveObjectId } from "../utils/derive-object-id";
-import { CLOCK_OBJECT_ID, NWN_ITEM_ID } from "../utils/constants";
+import { CLOCK_OBJECT_ID, GAME_CHARACTER_ID, NWN_ITEM_ID } from "../utils/constants";
 import { initializeContext, handleError, getEnvConfig } from "../utils/helper";
 
 /**
@@ -52,6 +52,7 @@ async function updateFuel(
     // Determine which assemblies are storage units by querying their types
     const assemblyTypes = await getAssemblyTypes(assemblyIds, client);
 
+    const character = deriveObjectId(config.objectRegistry, GAME_CHARACTER_ID, config.packageId);
     const tx = new Transaction();
 
     // Step 1: Call update_fuel which returns OfflineAssemblies
@@ -61,6 +62,7 @@ async function updateFuel(
         arguments: [
             tx.object(networkNodeId),
             tx.object(config.fuelConfig),
+            tx.object(character),
             tx.object(config.adminCap),
             tx.object(CLOCK_OBJECT_ID),
         ],

@@ -92,6 +92,7 @@ public struct NetworkNodeCreatedEvent has copy, drop {
 public fun deposit_fuel(
     nwn: &mut NetworkNode,
     admin_acl: &AdminACL,
+    character: &Character,
     owner_cap: &OwnerCap<NetworkNode>,
     type_id: u64,
     volume: u64,
@@ -106,12 +107,13 @@ public fun deposit_fuel(
     assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
     let sponsor = *option::borrow(&sponsor_opt);
     assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
-    nwn.fuel.deposit(nwn_id, nwn_key, type_id, volume, quantity, clock);
+    nwn.fuel.deposit(nwn_id, nwn_key, character.key(), type_id, volume, quantity, clock);
 }
 
 public fun withdraw_fuel(
     nwn: &mut NetworkNode,
     admin_acl: &AdminACL,
+    character: &Character,
     owner_cap: &OwnerCap<NetworkNode>,
     quantity: u64,
     ctx: &mut TxContext,
@@ -123,13 +125,18 @@ public fun withdraw_fuel(
     assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
     let sponsor = *option::borrow(&sponsor_opt);
     assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
-    nwn.fuel.withdraw(nwn_id, nwn_key, quantity);
+    nwn.fuel.withdraw(nwn_id, nwn_key, character.key(), quantity);
 }
 
-public fun online(nwn: &mut NetworkNode, owner_cap: &OwnerCap<NetworkNode>, clock: &Clock) {
+public fun online(
+    nwn: &mut NetworkNode,
+    character: &Character,
+    owner_cap: &OwnerCap<NetworkNode>,
+    clock: &Clock,
+) {
     let nwn_id = object::id(nwn);
     assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
-    nwn.fuel.start_burning(nwn_id, nwn.key, clock);
+    nwn.fuel.start_burning(nwn_id, nwn.key, character.key(), clock);
     nwn.energy_source.start_energy_production(nwn_id);
     nwn.status.online(nwn_id, nwn.key);
 }
@@ -139,6 +146,7 @@ public fun online(nwn: &mut NetworkNode, owner_cap: &OwnerCap<NetworkNode>, cloc
 public fun offline(
     nwn: &mut NetworkNode,
     fuel_config: &FuelConfig,
+    character: &Character,
     owner_cap: &OwnerCap<NetworkNode>,
     clock: &Clock,
 ): OfflineAssemblies {
@@ -147,10 +155,10 @@ public fun offline(
     assert!(nwn.status.is_online(), ENetworkNodeOffline);
 
     // Update fuel first to consume any pending fuel
-    nwn.fuel.update(nwn_id, nwn.key, fuel_config, clock);
+    nwn.fuel.update(nwn_id, nwn.key, character.key(), fuel_config, clock);
 
     if (nwn.fuel.is_burning()) {
-        nwn.fuel.stop_burning(nwn_id, nwn.key, fuel_config, clock);
+        nwn.fuel.stop_burning(nwn_id, nwn.key, character.key(), fuel_config, clock);
     };
 
     if (nwn.energy_source.current_energy_production() > 0) {
@@ -372,6 +380,7 @@ public fun destroy_network_node(
 public fun update_fuel(
     nwn: &mut NetworkNode,
     fuel_config: &FuelConfig,
+    character: &Character,
     _: &AdminCap,
     clock: &Clock,
 ): OfflineAssemblies {
@@ -379,7 +388,7 @@ public fun update_fuel(
 
     if (nwn.status.is_online()) {
         // Update fuel first
-        nwn.fuel.update(nwn_id, nwn.key, fuel_config, clock);
+        nwn.fuel.update(nwn_id, nwn.key, character.key(), fuel_config, clock);
 
         if (!nwn.fuel.is_burning()) {
             // Fuel depleted - bring network node offline
@@ -521,6 +530,7 @@ public fun status(network_node: &NetworkNode): &AssemblyStatus {
 public fun deposit_fuel_test(
     nwn: &mut NetworkNode,
     admin_acl: &AdminACL,
+    character: &Character,
     owner_cap: &OwnerCap<NetworkNode>,
     type_id: u64,
     volume: u64,
@@ -531,13 +541,14 @@ public fun deposit_fuel_test(
     let nwn_id = object::id(nwn);
     assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     assert!(admin_acl.is_authorized_sponsor(ctx.sender()), EUnauthorizedSponsor);
-    nwn.fuel.deposit(nwn_id, nwn.key, type_id, volume, quantity, clock);
+    nwn.fuel.deposit(nwn_id, nwn.key, character.key(), type_id, volume, quantity, clock);
 }
 
 #[test_only]
 public fun withdraw_fuel_test(
     nwn: &mut NetworkNode,
     admin_acl: &AdminACL,
+    character: &Character,
     owner_cap: &OwnerCap<NetworkNode>,
     quantity: u64,
     ctx: &mut TxContext,
@@ -545,5 +556,5 @@ public fun withdraw_fuel_test(
     let nwn_id = object::id(nwn);
     assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
     assert!(admin_acl.is_authorized_sponsor(ctx.sender()), EUnauthorizedSponsor);
-    nwn.fuel.withdraw(nwn_id, nwn.key, quantity);
+    nwn.fuel.withdraw(nwn_id, nwn.key, character.key(), quantity);
 }

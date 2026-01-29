@@ -165,8 +165,10 @@ fun do_deposit_fuel(
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(ts, nwn_id);
         let admin_acl = ts::take_shared<AdminACL>(ts);
+        let character = ts::take_shared<Character>(ts);
         nwn.deposit_fuel_test(
             &admin_acl,
+            &character,
             &owner_cap,
             FUEL_TYPE_ID,
             FUEL_VOLUME,
@@ -176,6 +178,7 @@ fun do_deposit_fuel(
         );
         ts::return_shared(admin_acl);
         ts::return_shared(nwn);
+        ts::return_shared(character);
     };
     ts::next_tx(ts, sender);
     {
@@ -296,10 +299,10 @@ fun withdraw_fuel() {
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let admin_acl = ts::take_shared<AdminACL>(&ts);
-
-        nwn.withdraw_fuel_test(&admin_acl, &owner_cap, 5, ts.ctx());
+        let character = ts::take_shared<Character>(&ts);
+        nwn.withdraw_fuel_test(&admin_acl, &character, &owner_cap, 5, ts.ctx());
         assert_eq!(nwn.fuel().quantity(), 5);
-
+        ts::return_shared(character);
         ts::return_shared(admin_acl);
         ts::return_shared(nwn);
     };
@@ -328,7 +331,8 @@ fun online() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
 
-        nwn.online(&owner_cap, &clock);
+        let character = ts::take_shared<Character>(&ts);
+        nwn.online(&character, &owner_cap, &clock);
 
         // Check status is online
         assert_eq!(nwn.status().status_to_u8(), STATUS_ONLINE);
@@ -342,6 +346,7 @@ fun online() {
         assert_eq!(nwn.energy().max_energy_production(), MAX_PRODUCTION);
 
         ts::return_shared(nwn);
+        ts::return_shared(character);
         ts::return_to_sender(&ts, owner_cap);
     };
 
@@ -368,12 +373,14 @@ fun connected_assemblies_online_offline() {
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        let character = ts::take_shared<Character>(&ts);
+        nwn.online(&character, &owner_cap, &clock);
         assert_eq!(nwn.status().status_to_u8(), STATUS_ONLINE);
         assert_eq!(nwn.fuel().is_burning(), true);
         assert_eq!(nwn.energy().current_energy_production(), MAX_PRODUCTION);
         assert_eq!(nwn.energy().total_reserved_energy(), 0);
         ts::return_shared(nwn);
+        ts::return_shared(character);
         ts::return_to_sender(&ts, owner_cap);
     };
 
@@ -430,14 +437,14 @@ fun update_fuel_intervals() {
 
     clock.set_for_testing(time_start);
     do_deposit_fuel(&mut ts, nwn_id, 10, &clock, user_a());
-
+    let character = ts::take_shared<Character>(&ts);
     // Bring network node online (consumes 1 unit immediately)
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
         clock.set_for_testing(time_start);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         assert_eq!(nwn.fuel().quantity(), 9);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
@@ -452,7 +459,7 @@ fun update_fuel_intervals() {
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
         clock.set_for_testing(time_after_1_hour);
-        let offline_assemblies = nwn.update_fuel(&fuel_config, &admin_cap, &clock);
+        let offline_assemblies = nwn.update_fuel(&fuel_config, &character, &admin_cap, &clock);
         // Should still be online, empty hot potato
         assert_eq!(offline_assemblies.ids_length(), 0);
         assert_eq!(nwn.fuel().quantity(), 8);
@@ -471,7 +478,7 @@ fun update_fuel_intervals() {
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
         clock.set_for_testing(time_after_2_hours);
-        let offline_assemblies = nwn.update_fuel(&fuel_config, &admin_cap, &clock);
+        let offline_assemblies = nwn.update_fuel(&fuel_config, &character, &admin_cap, &clock);
         assert_eq!(offline_assemblies.ids_length(), 0);
         assert_eq!(nwn.fuel().quantity(), 7);
         // Destroy the empty hot potato
@@ -480,7 +487,7 @@ fun update_fuel_intervals() {
         ts::return_shared(fuel_config);
         ts::return_to_sender(&ts, admin_cap);
     };
-
+    ts::return_shared(character);
     clock.destroy_for_testing();
     ts::end(ts);
 }
@@ -498,13 +505,14 @@ fun update_fuel_depletion_offline() {
     let time_10_00 = 1000;
     clock.set_for_testing(time_10_00);
     do_deposit_fuel(&mut ts, nwn_id, 2, &clock, user_a());
+    let character = ts::take_shared<Character>(&ts);
 
     // 10:00 am - Bring network node online (consumes 1 unit immediately, 1 remaining)
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         assert_eq!(nwn.fuel().quantity(), 1);
         assert_eq!(nwn.fuel().is_burning(), true);
         ts::return_shared(nwn);
@@ -523,7 +531,7 @@ fun update_fuel_depletion_offline() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let offline_assemblies = nwn.update_fuel(&fuel_config, &admin_cap, &clock);
+        let offline_assemblies = nwn.update_fuel(&fuel_config, &character, &admin_cap, &clock);
 
         // Quantity is 0, but still burning (last unit is burning)
         assert_eq!(offline_assemblies.ids_length(), 0);
@@ -544,7 +552,7 @@ fun update_fuel_depletion_offline() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let offline_assemblies = nwn.update_fuel(&fuel_config, &admin_cap, &clock);
+        let offline_assemblies = nwn.update_fuel(&fuel_config, &character, &admin_cap, &clock);
 
         // Still burning, still online
         assert_eq!(offline_assemblies.ids_length(), 0);
@@ -565,7 +573,7 @@ fun update_fuel_depletion_offline() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let offline_assemblies = nwn.update_fuel(&fuel_config, &admin_cap, &clock);
+        let offline_assemblies = nwn.update_fuel(&fuel_config, &character, &admin_cap, &clock);
 
         // Network node should go offline - burning stopped (2 units consumed)
         assert_eq!(offline_assemblies.ids_length() > 0, true);
@@ -594,7 +602,7 @@ fun update_fuel_depletion_offline() {
         ts::return_shared(fuel_config);
         ts::return_to_sender(&ts, admin_cap);
     };
-
+    ts::return_shared(character);
     clock.destroy_for_testing();
     ts::end(ts);
 }
@@ -610,11 +618,12 @@ fun update_energy_source_after_unanchor() {
 
     // Deposit fuel and bring network node online
     do_deposit_fuel(&mut ts, nwn1_id, 10, &clock, user_a());
+    let character = ts::take_shared<Character>(&ts);
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn1_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -668,7 +677,7 @@ fun update_energy_source_after_unanchor() {
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn2_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -681,7 +690,7 @@ fun update_energy_source_after_unanchor() {
         assert_eq!(nwn.energy().total_reserved_energy(), ASSEMBLY_ENERGY_REQUIRED);
         ts::return_shared(nwn);
     };
-
+    ts::return_shared(character);
     clock.destroy_for_testing();
     ts::end(ts);
 }
@@ -870,7 +879,9 @@ fun online_without_fuel() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
 
-        nwn.online(&owner_cap, &clock); // Should abort - no fuel
+        let character = ts::take_shared<Character>(&ts);
+        nwn.online(&character, &owner_cap, &clock); // Should abort - no fuel
+        ts::return_shared(character);
 
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
@@ -899,8 +910,9 @@ fun online_unauthorized_owner() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id_a);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts); // This is for nwn_id_b
 
-        nwn.online(&owner_cap, &clock); // Should abort - unauthorized
-
+        let character = ts::take_shared<Character>(&ts);
+        nwn.online(&character, &owner_cap, &clock); // Should abort - unauthorized
+        ts::return_shared(character);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -923,11 +935,13 @@ fun offline_hot_potato_not_consumed() {
     let assembly2_id = create_assembly(&mut ts, nwn_id, ITEM_ID_2);
 
     do_deposit_fuel(&mut ts, nwn_id, 10, &clock, user_a());
+    let character = ts::take_shared<Character>(&ts);
+
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -942,7 +956,7 @@ fun offline_hot_potato_not_consumed() {
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
         let owner_cap = ts::take_from_address<OwnerCap<NetworkNode>>(&ts, user_a());
         let admin_cap = ts::take_from_sender<AdminCap>(&ts);
-        let offline_assemblies = nwn.offline(&fuel_config, &owner_cap, &clock);
+        let offline_assemblies = nwn.offline(&fuel_config, &character, &owner_cap, &clock);
 
         // Process only one assembly (not both) - temporary offline, do not remove energy source
         let mut assembly1 = ts::take_shared_by_id<Assembly>(&ts, assembly1_id);
@@ -963,7 +977,7 @@ fun offline_hot_potato_not_consumed() {
         ts::return_to_sender(&ts, owner_cap);
         ts::return_to_sender(&ts, admin_cap);
     };
-
+    ts::return_shared(character);
     clock.destroy_for_testing();
     ts::end(ts);
 }
@@ -979,11 +993,12 @@ fun assembly_online_fails_without_updating_energy_source() {
     let assembly_id = create_assembly(&mut ts, nwn1_id, ITEM_ID_1);
 
     do_deposit_fuel(&mut ts, nwn1_id, 10, &clock, user_a());
+    let character = ts::take_shared<Character>(&ts);
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn1_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -1019,7 +1034,7 @@ fun assembly_online_fails_without_updating_energy_source() {
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn2_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };
@@ -1027,7 +1042,7 @@ fun assembly_online_fails_without_updating_energy_source() {
     // Try to bring assembly online without updating energy source - should fail
     // because assembly still points to the deleted nwn1_id
     online_assembly(&mut ts, assembly_id, nwn2_id, user_a());
-
+    ts::return_shared(character);
     clock.destroy_for_testing();
     ts::end(ts);
 }
@@ -1048,7 +1063,9 @@ fun update_energy_source_when_assembly_online() {
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn1_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
-        nwn.online(&owner_cap, &clock);
+        let character = ts::take_shared<Character>(&ts);
+        nwn.online(&character, &owner_cap, &clock);
+        ts::return_shared(character);
         ts::return_shared(nwn);
         ts::return_to_sender(&ts, owner_cap);
     };

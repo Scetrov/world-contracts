@@ -76,8 +76,8 @@ public fun swap_ammo_for_lens_extension<T: key>(
     storage_unit.deposit_by_owner(
         lens,
         server_registry,
-        owner_cap,
         character,
+        owner_cap,
         proof_bytes,
         clock,
         ctx,
@@ -86,8 +86,8 @@ public fun swap_ammo_for_lens_extension<T: key>(
     // Step 3: withdraws item owned by the interactor from their storage (owner access)
     let ammo = storage_unit.withdraw_by_owner(
         server_registry,
-        owner_cap,
         character,
+        owner_cap,
         AMMO_TYPE_ID,
         proof_bytes,
         clock,
@@ -192,12 +192,14 @@ fun online_storage_unit(ts: &mut ts::Scenario, user: address, storage_id: ID, nw
     let clock = clock::create_for_testing(ts.ctx());
     ts::next_tx(ts, user);
     let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(ts);
+    let character = ts::take_shared<Character>(ts);
     ts::next_tx(ts, admin());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(ts, nwn_id);
         let admin_acl = ts::take_shared<AdminACL>(ts);
         nwn.deposit_fuel_test(
             &admin_acl,
+            &character,
             &owner_cap,
             FUEL_TYPE_ID,
             FUEL_VOLUME,
@@ -212,13 +214,14 @@ fun online_storage_unit(ts: &mut ts::Scenario, user: address, storage_id: ID, nw
     ts::next_tx(ts, user);
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(ts, nwn_id);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(&character, &owner_cap, &clock);
         ts::return_shared(nwn);
     };
     ts::next_tx(ts, user);
     {
         ts::return_to_sender(ts, owner_cap);
     };
+    ts::return_shared(character);
 
     // Now bring storage unit online
     ts::next_tx(ts, user);
@@ -252,8 +255,8 @@ fun mint_ammo<T: key>(ts: &mut ts::Scenario, storage_id: ID, character_id: ID, u
         let admin_acl = ts::take_shared<AdminACL>(ts);
         storage_unit.game_item_to_chain_inventory_test<T>(
             &admin_acl,
-            &owner_cap,
             &character,
+            &owner_cap,
             AMMO_ITEM_ID,
             AMMO_TYPE_ID,
             AMMO_VOLUME,
@@ -284,8 +287,8 @@ fun mint_lens<T: key>(ts: &mut ts::Scenario, storage_id: ID, character_id: ID, u
         let admin_acl = ts::take_shared<AdminACL>(ts);
         storage_unit.game_item_to_chain_inventory_test<T>(
             &admin_acl,
-            &owner_cap,
             &character,
+            &owner_cap,
             LENS_ITEM_ID,
             LENS_TYPE_ID,
             LENS_VOLUME,
@@ -478,8 +481,8 @@ fun test_game_item_to_chain_and_chain_item_to_game_inventory() {
         let proof_bytes = bcs::to_bytes(&proof);
         storage_unit.chain_item_to_game_inventory_test(
             &server_registry,
-            &owner_cap,
             &character,
+            &owner_cap,
             AMMO_TYPE_ID,
             AMMO_QUANTITY,
             proof_bytes,
@@ -695,8 +698,8 @@ fun test_deposit_and_withdraw_by_owner() {
         item =
             storage_unit.withdraw_by_owner(
                 &server_registry,
-                &owner_cap,
                 &character,
+                &owner_cap,
                 AMMO_TYPE_ID,
                 proof_bytes,
                 &clock,
@@ -726,8 +729,8 @@ fun test_deposit_and_withdraw_by_owner() {
         storage_unit.deposit_by_owner(
             item,
             &server_registry,
-            &owner_cap,
             &character,
+            &owner_cap,
             proof_bytes,
             &clock,
             ts.ctx(),
@@ -1023,8 +1026,8 @@ fun test_deposit_via_extension_fail_not_authorized() {
         item =
             storage_unit.withdraw_by_owner(
                 &server_registry,
-                &owner_cap,
                 &character,
+                &owner_cap,
                 AMMO_TYPE_ID,
                 proof_bytes,
                 &clock,
@@ -1098,8 +1101,8 @@ fun test_withdraw_by_owner_fail_wrong_owner() {
         let character_a = ts::take_shared_by_id<Character>(&ts, character_a_id);
         let item = storage_unit.withdraw_by_owner(
             &server_registry,
-            &owner_cap,
             &character_a,
+            &owner_cap,
             AMMO_TYPE_ID,
             proof_bytes,
             &clock,
@@ -1109,8 +1112,8 @@ fun test_withdraw_by_owner_fail_wrong_owner() {
         storage_unit.deposit_by_owner(
             item,
             &server_registry,
-            &owner_cap,
             &character_a,
+            &owner_cap,
             proof_bytes,
             &clock,
             ts.ctx(),
@@ -1164,8 +1167,8 @@ fun test_deposit_by_owner_fail_wrong_owner() {
         item =
             storage_unit.withdraw_by_owner(
                 &server_registry,
-                &owner_cap,
                 &character_a,
+                &owner_cap,
                 AMMO_TYPE_ID,
                 proof_bytes,
                 &clock,
@@ -1205,8 +1208,8 @@ fun test_deposit_by_owner_fail_wrong_owner() {
         storage_unit.deposit_by_owner(
             item,
             &server_registry,
-            &owner_cap,
             &character_a,
+            &owner_cap,
             proof_bytes,
             &clock,
             ts.ctx(),
@@ -1326,8 +1329,8 @@ public fun chain_item_to_game_inventory_fail_unauthorized_owner() {
         let character_b = ts::take_shared_by_id<Character>(&ts, character_b_id);
         storage_unit.chain_item_to_game_inventory_test(
             &server_registry,
-            &owner_cap,
             &character_b,
+            &owner_cap,
             LENS_TYPE_ID,
             LENS_QUANTITY,
             proof_bytes,
@@ -1387,6 +1390,7 @@ fun online_fail_by_unauthorized_owner() {
     let clock = clock::create_for_testing(ts.ctx());
     ts::next_tx(&mut ts, user_a());
     let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
+    let character = ts::take_shared<Character>(&ts);
 
     ts::next_tx(&mut ts, admin());
     {
@@ -1394,6 +1398,7 @@ fun online_fail_by_unauthorized_owner() {
         let admin_acl = ts::take_shared<AdminACL>(&ts);
         nwn.deposit_fuel_test(
             &admin_acl,
+            &character,
             &owner_cap,
             FUEL_TYPE_ID,
             FUEL_VOLUME,
@@ -1408,13 +1413,18 @@ fun online_fail_by_unauthorized_owner() {
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(
+            &character,
+            &owner_cap,
+            &clock,
+        );
         ts::return_shared(nwn);
     };
     ts::next_tx(&mut ts, user_a());
     {
         ts::return_to_sender(&ts, owner_cap);
     };
+    ts::return_shared(character);
 
     // Create User B Storage unit (so user_b has their own OwnerCap<StorageUnit>)
     create_storage_unit(
@@ -1539,8 +1549,8 @@ fun test_deposit_by_owner_fail_tenant_mismatch() {
         item =
             storage_unit.withdraw_by_owner(
                 &server_registry,
-                &owner_cap,
                 &character,
+                &owner_cap,
                 AMMO_TYPE_ID,
                 proof_bytes,
                 &clock,
@@ -1582,8 +1592,8 @@ fun test_deposit_by_owner_fail_tenant_mismatch() {
         storage_unit.deposit_by_owner(
             item,
             &server_registry,
-            &owner_cap,
             &character,
+            &owner_cap,
             proof_bytes,
             &clock,
             ts.ctx(),
@@ -1647,8 +1657,8 @@ fun test_deposit_via_extension_fail_tenant_mismatch() {
         item =
             storage_unit.withdraw_by_owner(
                 &server_registry,
-                &owner_cap,
                 &character,
+                &owner_cap,
                 AMMO_TYPE_ID,
                 proof_bytes,
                 &clock,
@@ -1721,12 +1731,14 @@ fun test_game_to_chain_fail_network_node_offline() {
     let clock = clock::create_for_testing(ts.ctx());
     ts::next_tx(&mut ts, user_a());
     let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
+    let character = ts::take_shared<Character>(&ts);
     ts::next_tx(&mut ts, admin());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let admin_acl = ts::take_shared<AdminACL>(&ts);
         nwn.deposit_fuel_test(
             &admin_acl,
+            &character,
             &owner_cap,
             FUEL_TYPE_ID,
             FUEL_VOLUME,
@@ -1741,7 +1753,11 @@ fun test_game_to_chain_fail_network_node_offline() {
     ts::next_tx(&mut ts, user_a());
     {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
-        nwn.online(&owner_cap, &clock);
+        nwn.online(
+            &character,
+            &owner_cap,
+            &clock,
+        );
         ts::return_shared(nwn);
     };
     ts::next_tx(&mut ts, user_a());
@@ -1769,7 +1785,12 @@ fun test_game_to_chain_fail_network_node_offline() {
         let mut nwn = ts::take_shared_by_id<NetworkNode>(&ts, nwn_id);
         let owner_cap = ts::take_from_sender<OwnerCap<NetworkNode>>(&ts);
         let fuel_config = ts::take_shared<FuelConfig>(&ts);
-        let mut offline_assemblies = nwn.offline(&fuel_config, &owner_cap, &clock);
+        let mut offline_assemblies = nwn.offline(
+            &fuel_config,
+            &character,
+            &owner_cap,
+            &clock,
+        );
 
         // Process the storage unit to bring it offline (temporary offline, do not remove energy source)
         let mut storage_unit = ts::take_shared_by_id<StorageUnit>(&ts, storage_id);
@@ -1788,6 +1809,7 @@ fun test_game_to_chain_fail_network_node_offline() {
         ts::return_shared(fuel_config);
         ts::return_to_sender(&ts, owner_cap);
     };
+    ts::return_shared(character);
 
     // Verify network node is offline and not burning
     ts::next_tx(&mut ts, admin());
@@ -1814,8 +1836,8 @@ fun test_game_to_chain_fail_network_node_offline() {
         // This should fail because storage unit is offline (network node is offline and not burning)
         storage_unit.game_item_to_chain_inventory_test<StorageUnit>(
             &admin_acl,
-            &owner_cap,
             &character,
+            &owner_cap,
             AMMO_ITEM_ID,
             AMMO_TYPE_ID,
             AMMO_VOLUME,
