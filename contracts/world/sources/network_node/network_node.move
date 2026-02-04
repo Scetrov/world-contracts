@@ -39,13 +39,9 @@ const EAssembliesConnected: vector<u8> = b"Assemblies needs to be disconnected b
 #[error(code = 7)]
 const ENetworkNodeOffline: vector<u8> = b"Network Node is offline";
 #[error(code = 8)]
-const EUnauthorizedSponsor: vector<u8> = b"Unauthorized sponsor";
-#[error(code = 9)]
-const ETransactionNotSponsored: vector<u8> = b"Transaction not sponsored";
-#[error(code = 10)]
 const EUpdateEnergySourcesNotProcessed: vector<u8> =
     b"Energy source must be updated for all connected assemblies";
-#[error(code = 11)]
+#[error(code = 9)]
 const EOrphanedAssembliesNotOfflined: vector<u8> =
     b"Orphaned assemblies must be offlined before destroying network node";
 
@@ -102,10 +98,7 @@ public fun deposit_fuel(
     let nwn_id = object::id(nwn);
     let nwn_key = nwn.key;
     assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
-    let sponsor_opt = tx_context::sponsor(ctx);
-    assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
-    let sponsor = *option::borrow(&sponsor_opt);
-    assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
+    admin_acl.verify_sponsor(ctx);
     nwn.fuel.deposit(nwn_id, nwn_key, type_id, volume, quantity, clock);
 }
 
@@ -119,10 +112,7 @@ public fun withdraw_fuel(
     let nwn_id = object::id(nwn);
     let nwn_key = nwn.key;
     assert!(access::is_authorized(owner_cap, nwn_id), ENetworkNodeNotAuthorized);
-    let sponsor_opt = tx_context::sponsor(ctx);
-    assert!(option::is_some(&sponsor_opt), ETransactionNotSponsored);
-    let sponsor = *option::borrow(&sponsor_opt);
-    assert!(admin_acl.is_authorized_sponsor(sponsor), EUnauthorizedSponsor);
+    admin_acl.verify_sponsor(ctx);
     nwn.fuel.withdraw(nwn_id, nwn_key, quantity);
 }
 
@@ -446,7 +436,7 @@ public(package) fun remove_assembly_id(
 }
 
 /// Removes an assembly ID from the UpdateEnergySources list
-public(package) fun remove_update_energy_sources_assembly_id(
+public(package) fun remove_energy_sources_assembly_id(
     update_energy_sources: &mut UpdateEnergySources,
     assembly_id: ID,
 ): bool {
