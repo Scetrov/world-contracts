@@ -119,6 +119,14 @@ public fun max_capacity(inventory: &Inventory): u64 {
     inventory.max_capacity
 }
 
+public fun type_id(item: &Item): u64 {
+    item.type_id
+}
+
+public fun quantity(item: &Item): u32 {
+    item.quantity
+}
+
 // === Package Functions ===
 
 public(package) fun create(max_capacity: u64): Inventory {
@@ -182,6 +190,7 @@ public(package) fun mint_items(
     }
 }
 
+// TODO: remove proximity proof check as it will be handled in the parent module
 public(package) fun burn_items_with_proof(
     inventory: &mut Inventory,
     assembly_id: ID,
