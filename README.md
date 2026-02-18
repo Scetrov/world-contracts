@@ -41,22 +41,18 @@ If you are looking for the current contracts used in game they can be found here
 
 ### Build Image
 ```bash
-docker build -t world-contracts:latest -f docker/Dockerfile .
+docker build -t world-contracts:latest --target release-stage -f docker/Dockerfile .
 ```
 
-### Deploy to Testnet
+### Deploy & Configure
 ```bash
-docker run -it --rm \
-  -v $(pwd)/.env:/app/.env:ro \
-  -v $(pwd)/deployments:/app/deployments \
-  world-contracts:latest \
-  ./scripts/deploy.sh --env=testnet
+docker run --rm \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/deployments:/app/deployments" \
+  world-contracts:latest
 ```
 
-# Dry run deployment
-```
-./scripts/docker-deploy.sh --env=testnet --dry-run
-```
+On failure, check `deployments/<env>/deploy.log` for details.
 
 ## Local Development
 
@@ -77,13 +73,6 @@ npm run test
 
 ### Deploy Locally
 ```bash
-# optionally change the network in the .env, by default its localnet
-npm run deploy
-```
-
-## Deployment Outputs
-
-After deployment, check the results:
-```bash
-cat deployments/testnet-deployment.json
+# Uses SUI_NETWORK from .env (default: localnet)
+pnpm deploy-world
 ```

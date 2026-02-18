@@ -10,8 +10,6 @@ import {
     typeName,
 } from "./helper";
 
-// Hardcoded publish output paths (relative to where you run the scripts from).
-const WORLD_PUBLISH_OUTPUT_PATH = "./deployments/testnet/world_package.json";
 export const EXTRACTED_OBJECT_IDS_FILENAME = "extracted-object-ids.json";
 
 const cache = new Map<string, Promise<WorldObjectIds>>();
@@ -20,12 +18,20 @@ export function getExtractedObjectIdsPath(network: string): string {
     return path.resolve(process.cwd(), "deployments", network, EXTRACTED_OBJECT_IDS_FILENAME);
 }
 
+function getWorldPublishOutputPath(network: string): string {
+    const pathOverride = process.env.WORLD_PUBLISH_OUTPUT;
+    if (pathOverride) return pathOverride;
+    return `./deployments/${network}/world_package.json`;
+}
+
 export async function resolveWorldObjectIds(
     _client: SuiClient,
     worldPackageId: string,
-    governorAddress: string
+    governorAddress: string,
+    network?: string
 ): Promise<WorldObjectIds> {
-    const worldPublishOutputPath = resolvePublishOutputPath(WORLD_PUBLISH_OUTPUT_PATH);
+    const net = network ?? process.env.SUI_NETWORK ?? "localnet";
+    const worldPublishOutputPath = resolvePublishOutputPath(getWorldPublishOutputPath(net));
     const { objectChanges: worldObjectChanges } = readPublishOutputFile(worldPublishOutputPath);
     const publishedWorldPackageId = getPublishedPackageId(worldObjectChanges);
 
