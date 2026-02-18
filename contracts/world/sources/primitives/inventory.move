@@ -27,6 +27,8 @@ const EInventoryInsufficientCapacity: vector<u8> = b"Insufficient capacity in th
 const EItemDoesNotExist: vector<u8> = b"Item not found";
 #[error(code = 4)]
 const EInventoryInsufficientQuantity: vector<u8> = b"Insufficient quantity in inventory";
+#[error(code = 5)]
+const EItemVolumeMismatch: vector<u8> = b"Item volume must match existing item with same type_id";
 
 // === Structs ===
 
@@ -215,6 +217,7 @@ public(package) fun burn_items_with_proof(
 }
 
 // A wrapper function to transfer between inventories
+// If the inventory already has an item with the same type_id, adds quantity to the existing item instead of inserting.
 public(package) fun deposit_item(
     inventory: &mut Inventory,
     assembly_id: ID,
@@ -222,22 +225,43 @@ public(package) fun deposit_item(
     character: &Character,
     item: Item,
 ) {
+    let type_id = item.type_id;
     let req_capacity = calculate_volume(item.volume, item.quantity);
     let remaining_capacity = inventory.max_capacity - inventory.used_capacity;
     assert!(req_capacity <= remaining_capacity, EInventoryInsufficientCapacity);
 
-    inventory.used_capacity = inventory.used_capacity + req_capacity;
+    if (inventory.items.contains(&type_id)) {
+        let existing = &mut inventory.items[&type_id];
+        assert!(item.volume == existing.volume, EItemVolumeMismatch);
+        inventory.used_capacity = inventory.used_capacity + req_capacity;
+        existing.quantity = existing.quantity + item.quantity;
 
-    event::emit(ItemDepositedEvent {
-        assembly_id,
-        assembly_key,
-        character_id: character.id(),
-        character_key: character.key(),
-        item_id: item.item_id,
-        type_id: item.type_id,
-        quantity: item.quantity,
-    });
-    inventory.items.insert(item.type_id, item);
+        event::emit(ItemDepositedEvent {
+            assembly_id,
+            assembly_key,
+            character_id: character.id(),
+            character_key: character.key(),
+            item_id: existing.item_id,
+            type_id,
+            quantity: item.quantity,
+        });
+        let Item { id, location, .. } = item;
+        location.remove();
+        id.delete();
+    } else {
+        inventory.used_capacity = inventory.used_capacity + req_capacity;
+
+        event::emit(ItemDepositedEvent {
+            assembly_id,
+            assembly_key,
+            character_id: character.id(),
+            character_key: character.key(),
+            item_id: item.item_id,
+            type_id,
+            quantity: item.quantity,
+        });
+        inventory.items.insert(type_id, item);
+    };
 }
 
 // A wrapper function to transfer between inventories
