@@ -6,13 +6,7 @@ import { getConfig, MODULES } from "../utils/config";
 import { getConnectedAssemblies, getAssemblyTypes } from "./helper";
 import { deriveObjectId } from "../utils/derive-object-id";
 import { NWN_ITEM_ID } from "../utils/constants";
-import {
-    hydrateWorldConfig,
-    initializeContext,
-    handleError,
-    getEnvConfig,
-    getAdminCapId,
-} from "../utils/helper";
+import { hydrateWorldConfig, initializeContext, handleError, getEnvConfig } from "../utils/helper";
 
 /**
  * Unanchors (destroys) the network node and handles connected assemblies.
@@ -28,7 +22,7 @@ import {
  */
 async function unanchor(
     networkNodeId: string,
-    adminCapId: string,
+    adminAcl: string,
     client: SuiClient,
     keypair: Ed25519Keypair,
     config: ReturnType<typeof getConfig>
@@ -45,7 +39,7 @@ async function unanchor(
     // Call unanchor - returns HandleOrphanedAssemblies hot potato (NWN is still alive until destroy_network_node)
     const [unanchorAssemblies] = tx.moveCall({
         target: `${config.packageId}::${MODULES.NETWORK_NODE}::unanchor`,
-        arguments: [tx.object(networkNodeId), tx.object(adminCapId)],
+        arguments: [tx.object(networkNodeId), tx.object(adminAcl)],
     });
 
     let currentHotPotato = unanchorAssemblies;
@@ -72,7 +66,7 @@ async function unanchor(
     // Destroy the network node (consumes hot potato and NWN)
     tx.moveCall({
         target: `${config.packageId}::${MODULES.NETWORK_NODE}::destroy_network_node`,
-        arguments: [tx.object(networkNodeId), currentHotPotato, tx.object(adminCapId)],
+        arguments: [tx.object(networkNodeId), currentHotPotato, tx.object(adminAcl)],
     });
 
     const result = await client.signAndExecuteTransaction({
@@ -92,8 +86,7 @@ async function main() {
         await hydrateWorldConfig(ctx);
         const { client, keypair, config } = ctx;
 
-        const adminCapId = await getAdminCapId(client, config.packageId);
-        if (!adminCapId) throw new Error("AdminCap not found");
+        const adminAcl = config.adminAcl;
 
         const networkNodeObject = deriveObjectId(
             config.objectRegistry,
@@ -101,7 +94,7 @@ async function main() {
             config.packageId
         );
 
-        await unanchor(networkNodeObject, adminCapId!, client, keypair, config);
+        await unanchor(networkNodeObject, adminAcl, client, keypair, config);
     } catch (error) {
         handleError(error);
     }
