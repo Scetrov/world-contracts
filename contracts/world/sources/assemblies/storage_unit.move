@@ -222,17 +222,17 @@ public fun withdraw_item<Auth: drop>(
     )
 }
 
-// TODO: add additional check for proximity proof
 public fun deposit_by_owner<T: key>(
     storage_unit: &mut StorageUnit,
     item: Item,
-    server_registry: &ServerAddressRegistry,
     character: &Character,
+    admin_acl: &AdminACL,
     owner_cap: &OwnerCap<T>,
-    proximity_proof: vector<u8>,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    // TODO: Add proximity_proof verification when location service is available.
+    // Until then, admin_acl is used to verify via sponsored transaction.
+    admin_acl.verify_sponsor(ctx);
     assert!(character.character_address() == ctx.sender(), ESenderCannotAccessCharacter);
     let storage_unit_id = object::id(storage_unit);
     let owner_cap_id = object::id(owner_cap);
@@ -244,14 +244,6 @@ public fun deposit_by_owner<T: key>(
     location::verify_same_location(
         storage_unit.location.hash(),
         item.get_item_location_hash(),
-    );
-
-    location::verify_proximity_proof_from_bytes(
-        server_registry,
-        &storage_unit.location,
-        proximity_proof,
-        clock,
-        ctx,
     );
 
     let inventory = df::borrow_mut<ID, Inventory>(
@@ -267,30 +259,22 @@ public fun deposit_by_owner<T: key>(
     );
 }
 
-// TODO: add additional check for proximity proof
 public fun withdraw_by_owner<T: key>(
     storage_unit: &mut StorageUnit,
-    server_registry: &ServerAddressRegistry,
     character: &Character,
+    admin_acl: &AdminACL,
     owner_cap: &OwnerCap<T>,
     type_id: u64,
-    proximity_proof: vector<u8>,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): Item {
+    // TODO: Add proximity_proof verification when location service is available.
+    // Until then, admin_acl is used to verify via sponsored transaction.
+    admin_acl.verify_sponsor(ctx);
     assert!(character.character_address() == ctx.sender(), ESenderCannotAccessCharacter);
     let storage_unit_id = object::id(storage_unit);
     let owner_cap_id = object::id(owner_cap);
     assert!(storage_unit.status.is_online(), ENotOnline);
     check_inventory_authorization(owner_cap, storage_unit, character.id());
-
-    location::verify_proximity_proof_from_bytes(
-        server_registry,
-        &storage_unit.location,
-        proximity_proof,
-        clock,
-        ctx,
-    );
 
     let inventory = df::borrow_mut<ID, Inventory>(
         &mut storage_unit.id,
