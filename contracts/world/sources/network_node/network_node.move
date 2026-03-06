@@ -8,6 +8,7 @@
 /// Future: There might be multiple power sources connected together to generate more energy that can be used by assemblies in the base
 module world::network_node;
 
+use std::string::String;
 use sui::{clock::Clock, derived_object, event};
 use world::{
     access::{Self, OwnerCap, AdminACL},
@@ -44,6 +45,8 @@ const EUpdateEnergySourcesNotProcessed: vector<u8> =
 #[error(code = 9)]
 const EOrphanedAssembliesNotOfflined: vector<u8> =
     b"Orphaned assemblies must be offlined before destroying network node";
+#[error(code = 10)]
+const EMetadataNotSet: vector<u8> = b"Metadata not set on assembly";
 
 // === Structs ===
 /// Hot potato struct to enforce all connected assemblies are brought offline
@@ -153,6 +156,39 @@ public fun offline(
     OfflineAssemblies {
         assembly_ids: copy_connected_assembly_ids(nwn),
     }
+}
+
+public fun update_metadata_name(
+    nwn: &mut NetworkNode,
+    owner_cap: &OwnerCap<NetworkNode>,
+    name: String,
+) {
+    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    assert!(option::is_some(&nwn.metadata), EMetadataNotSet);
+    let metadata = option::borrow_mut(&mut nwn.metadata);
+    metadata.update_name(nwn.key, name);
+}
+
+public fun update_metadata_description(
+    nwn: &mut NetworkNode,
+    owner_cap: &OwnerCap<NetworkNode>,
+    description: String,
+) {
+    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    assert!(option::is_some(&nwn.metadata), EMetadataNotSet);
+    let metadata = option::borrow_mut(&mut nwn.metadata);
+    metadata.update_description(nwn.key, description);
+}
+
+public fun update_metadata_url(
+    nwn: &mut NetworkNode,
+    owner_cap: &OwnerCap<NetworkNode>,
+    url: String,
+) {
+    assert!(access::is_authorized(owner_cap, object::id(nwn)), ENetworkNodeNotAuthorized);
+    assert!(option::is_some(&nwn.metadata), EMetadataNotSet);
+    let metadata = option::borrow_mut(&mut nwn.metadata);
+    metadata.update_url(nwn.key, url);
 }
 
 // === View Functions ===
