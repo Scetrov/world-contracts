@@ -21,7 +21,7 @@ use world::{
     character::{Self, Character},
     energy::EnergyConfig,
     in_game_id::{Self, TenantItemId},
-    location::{Self, Location},
+    location::{Self, Location, LocationRegistry},
     metadata::{Self, Metadata},
     network_node::{NetworkNode, OfflineAssemblies, HandleOrphanedAssemblies, UpdateEnergySources},
     object_registry::ObjectRegistry,
@@ -416,6 +416,33 @@ public fun update_metadata_url(gate: &mut Gate, owner_cap: &OwnerCap<Gate>, url:
     assert!(option::is_some(&gate.metadata), EMetadataNotSet);
     let metadata = option::borrow_mut(&mut gate.metadata);
     metadata.update_url(gate.key, url);
+}
+
+/// Reveals plain-text location (solarsystem, x, y, z) for this gate. Admin ACL only. Optional; enables dapps (e.g. route maps).
+/// Temporary: use until the offchain location reveal service is ready.
+public fun reveal_location(
+    gate: &Gate,
+    registry: &mut LocationRegistry,
+    admin_acl: &AdminACL,
+    solarsystem: u64,
+    x: String,
+    y: String,
+    z: String,
+    ctx: &TxContext,
+) {
+    admin_acl.verify_sponsor(ctx);
+    location::reveal_location(
+        registry,
+        object::id(gate),
+        gate.key,
+        gate.type_id,
+        gate.owner_cap_id,
+        location::hash(&gate.location),
+        solarsystem,
+        x,
+        y,
+        z,
+    );
 }
 
 // === View Functions ===
