@@ -273,6 +273,7 @@ public fun deposit_item<Auth: drop>(
     inventory.deposit_item(
         storage_unit_id,
         storage_unit.key,
+        storage_unit.owner_cap_id,
         character,
         item,
     );
@@ -301,6 +302,7 @@ public fun withdraw_item<Auth: drop>(
     inventory.withdraw_item(
         storage_unit_id,
         storage_unit.key,
+        storage_unit.owner_cap_id,
         character,
         type_id,
         quantity,
@@ -335,6 +337,7 @@ public fun deposit_to_open_inventory<Auth: drop>(
     inventory.deposit_item(
         storage_unit_id,
         storage_unit.key,
+        key,
         character,
         item,
     );
@@ -363,6 +366,7 @@ public fun withdraw_from_open_inventory<Auth: drop>(
     inventory.withdraw_item(
         storage_unit_id,
         storage_unit.key,
+        key,
         character,
         type_id,
         quantity,
@@ -412,6 +416,7 @@ public fun deposit_to_owned<Auth: drop>(
     inventory.deposit_item(
         storage_unit_id,
         storage_unit.key,
+        owner_cap_id,
         character,
         item,
     );
@@ -440,6 +445,7 @@ public fun deposit_by_owner<T: key>(
     inventory.deposit_item(
         storage_unit_id,
         storage_unit.key,
+        owner_cap_id,
         character,
         item,
     );
@@ -467,6 +473,7 @@ public fun withdraw_by_owner<T: key>(
     inventory.withdraw_item(
         storage_unit_id,
         storage_unit.key,
+        owner_cap_id,
         character,
         type_id,
         quantity,

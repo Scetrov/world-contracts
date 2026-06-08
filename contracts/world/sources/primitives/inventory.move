@@ -136,9 +136,31 @@ public struct ItemDepositedEvent has copy, drop {
     quantity: u32,
 }
 
+public struct ItemDepositedEventV2 has copy, drop {
+    assembly_id: ID,
+    assembly_key: TenantItemId,
+    inventory_key: ID,
+    character_id: ID,
+    character_key: TenantItemId,
+    item_id: u64,
+    type_id: u64,
+    quantity: u32,
+}
+
 public struct ItemWithdrawnEvent has copy, drop {
     assembly_id: ID,
     assembly_key: TenantItemId,
+    character_id: ID,
+    character_key: TenantItemId,
+    item_id: u64,
+    type_id: u64,
+    quantity: u32,
+}
+
+public struct ItemWithdrawnEventV2 has copy, drop {
+    assembly_id: ID,
+    assembly_key: TenantItemId,
+    inventory_key: ID,
     character_id: ID,
     character_key: TenantItemId,
     item_id: u64,
@@ -294,6 +316,7 @@ public(package) fun deposit_item(
     inventory: &mut Inventory,
     assembly_id: ID,
     assembly_key: TenantItemId,
+    inventory_key: ID,
     character: &Character,
     item: Item,
 ) {
@@ -325,9 +348,10 @@ public(package) fun deposit_item(
         item_id
     };
 
-    event::emit(ItemDepositedEvent {
+    event::emit(ItemDepositedEventV2 {
         assembly_id,
         assembly_key,
+        inventory_key,
         character_id: character.id(),
         character_key: character.key(),
         item_id: dep_item_id,
@@ -346,6 +370,7 @@ public(package) fun withdraw_item(
     inventory: &mut Inventory,
     assembly_id: ID,
     assembly_key: TenantItemId,
+    inventory_key: ID,
     character: &Character,
     type_id: u64,
     quantity: u32,
@@ -371,9 +396,10 @@ public(package) fun withdraw_item(
         entry_mut.quantity = entry_mut.quantity - quantity;
     };
 
-    event::emit(ItemWithdrawnEvent {
+    event::emit(ItemWithdrawnEventV2 {
         assembly_id,
         assembly_key,
+        inventory_key,
         character_id: character.id(),
         character_key: character.key(),
         item_id,
